@@ -13,6 +13,20 @@ import traceback
 app = Flask(__name__)
 
 
+# Global error handler to always return JSON for API endpoints
+@app.errorhandler(Exception)
+def handle_error(error):
+    """Handle all errors and return JSON instead of HTML"""
+    # Check if this is an API request
+    if request.path.startswith('/api/'):
+        return jsonify({
+            'success': False,
+            'error': str(error)
+        }), 500
+    # For non-API requests, let Flask handle it normally
+    raise error
+
+
 @app.route('/')
 def index():
     """Main page"""
@@ -26,11 +40,14 @@ def get_channels():
         import requests
         
         # Get bearer token from request
-        data = request.json
+        data = request.get_json(silent=True)
+        if not data:
+            return jsonify({'success': False, 'error': 'Invalid request format. Expected JSON data.'}), 400
+        
         bearer_token = data.get('bearerToken', '')
         
         if not bearer_token:
-            return jsonify({'success': False, 'error': 'Bearer token is required'})
+            return jsonify({'success': False, 'error': 'Bearer token is required'}), 400
         
         # Fetch categories from CS API
         categories_response = requests.get(
@@ -183,13 +200,15 @@ def get_channels():
 def export_data():
     """Export data with filters"""
     try:
-        data = request.json
+        data = request.get_json(silent=True)
+        if not data:
+            return jsonify({'success': False, 'error': 'Invalid request format. Expected JSON data.'}), 400
         
         # Get bearer token from request
         bearer_token = data.get('bearerToken', '')
         
         if not bearer_token:
-            return jsonify({'success': False, 'error': 'Bearer token is required'})
+            return jsonify({'success': False, 'error': 'Bearer token is required'}), 400
         
         # Parse filters
         time_frame = data.get('timeFrame', 'last_7_days')
@@ -356,13 +375,15 @@ def download_file(filename):
 def preview_data():
     """Preview video count before exporting"""
     try:
-        data = request.json
+        data = request.get_json(silent=True)
+        if not data:
+            return jsonify({'success': False, 'error': 'Invalid request format. Expected JSON data.'}), 400
         
         # Get bearer token from request
         bearer_token = data.get('bearerToken', '')
         
         if not bearer_token:
-            return jsonify({'success': False, 'error': 'Bearer token is required'})
+            return jsonify({'success': False, 'error': 'Bearer token is required'}), 400
         
         # Parse filters (same as export)
         time_frame = data.get('timeFrame', 'last_7_days')
