@@ -200,26 +200,47 @@ def get_channels():
 def export_data():
     """Export data with filters"""
     try:
+        print("\n" + "="*70)
+        print("📤 EXPORT REQUEST RECEIVED")
+        print("="*70)
+        
         data = request.get_json(silent=True)
         if not data:
+            print("❌ Error: No JSON data received")
             return jsonify({'success': False, 'error': 'Invalid request format. Expected JSON data.'}), 400
         
         # Get bearer token from request
         bearer_token = data.get('bearerToken', '')
         
         if not bearer_token:
+            print("❌ Error: No bearer token provided")
             return jsonify({'success': False, 'error': 'Bearer token is required'}), 400
         
-        # Parse filters
-        time_frame = data.get('timeFrame', 'last_7_days')
-        channel_ids = data.get('channelIds', [])
-        content_type = data.get('contentType', 'all')
-        sort_by = data.get('sortBy', 'outlier_score')
-        outlier_min = float(data.get('outlierMin', 0))
-        outlier_max = float(data.get('outlierMax', 100))
-        views_min = int(data.get('viewsMin', 0))
-        views_max = data.get('viewsMax', None)
-        include_transcripts = data.get('includeTranscripts', True)
+        print(f"✅ Bearer token received: {bearer_token[:20]}...")
+        
+        # Parse filters with error handling
+        try:
+            time_frame = data.get('timeFrame', 'last_7_days')
+            channel_ids = data.get('channelIds', [])
+            content_type = data.get('contentType', 'all')
+            sort_by = data.get('sortBy', 'outlier_score')
+            outlier_min = float(data.get('outlierMin', 0))
+            outlier_max = float(data.get('outlierMax', 100))
+            views_min = int(data.get('viewsMin', 0))
+            views_max_raw = data.get('viewsMax', None)
+            views_max = int(views_max_raw) if views_max_raw and str(views_max_raw).strip() else None
+            include_transcripts = data.get('includeTranscripts', True)
+            
+            print(f"📋 Filters parsed successfully:")
+            print(f"   Time frame: {time_frame}")
+            print(f"   Channels: {len(channel_ids)}")
+            print(f"   Content type: {content_type}")
+            print(f"   Sort by: {sort_by}")
+            print(f"   Include transcripts: {include_transcripts}")
+        except Exception as parse_error:
+            print(f"❌ Error parsing filters: {parse_error}")
+            traceback.print_exc()
+            return jsonify({'success': False, 'error': f'Invalid filter values: {str(parse_error)}'}), 400
         
         # Calculate date range
         end_date = datetime.now()
@@ -274,16 +295,30 @@ def export_data():
         print(f"  include_transcripts: {include_transcripts}")
         
         # Create exporter with user's token
-        exporter = CSDataExporter(bearer_token)
+        try:
+            print("🔧 Creating CSDataExporter instance...")
+            exporter = CSDataExporter(bearer_token)
+            print("✅ CSDataExporter created successfully")
+        except Exception as exporter_error:
+            print(f"❌ Error creating CSDataExporter: {exporter_error}")
+            traceback.print_exc()
+            return jsonify({'success': False, 'error': f'Failed to initialize exporter: {str(exporter_error)}'}), 500
         
-        videos = exporter.fetch_videos(
-            start_date=start_date_str,
-            end_date=end_date_str,
-            channel_ids=channel_ids if channel_ids else None,
-            sort_by=sort_by,
-            is_short=is_short if is_short is not None else False,
-            include_transcripts=include_transcripts
-        )
+        try:
+            print("📡 Fetching videos from API...")
+            videos = exporter.fetch_videos(
+                start_date=start_date_str,
+                end_date=end_date_str,
+                channel_ids=channel_ids if channel_ids else None,
+                sort_by=sort_by,
+                is_short=is_short if is_short is not None else False,
+                include_transcripts=include_transcripts
+            )
+            print(f"✅ Fetch completed: {len(videos) if videos else 0} videos retrieved")
+        except Exception as fetch_error:
+            print(f"❌ Error fetching videos: {fetch_error}")
+            traceback.print_exc()
+            return jsonify({'success': False, 'error': f'Failed to fetch videos: {str(fetch_error)}'}), 500
         
         print(f"\n=== Videos Fetched ===")
         print(f"Total videos before filters: {len(videos)}")
@@ -331,7 +366,9 @@ def export_data():
         
         # Export to Excel with error handling
         try:
+            print(f"\n📊 Creating Excel file: {filename}")
             exporter.export_to_excel(filtered_videos, filename=filepath)
+            print(f"✅ Excel file created successfully")
             
             return jsonify({
                 'success': True,
@@ -341,17 +378,17 @@ def export_data():
             })
         except Exception as export_error:
             print(f"❌ Error during Excel export: {export_error}")
-            import traceback
             traceback.print_exc()
             return jsonify({
                 'success': False,
                 'error': f'Error creating Excel file: {str(export_error)}. The data was fetched successfully but there was an issue formatting it for Excel.'
-            })
+            }), 500
         
     except Exception as e:
-        print(f"Error exporting data: {e}")
+        print(f"\n❌ UNEXPECTED ERROR in export_data:")
+        print(f"Error: {e}")
         traceback.print_exc()
-        return jsonify({'success': False, 'error': str(e)})
+        return jsonify({'success': False, 'error': f'Unexpected error: {str(e)}'}), 500
 
 
 @app.route('/api/download/<filename>')
