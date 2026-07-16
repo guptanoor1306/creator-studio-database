@@ -552,6 +552,14 @@ def send_to_slack():
         
         print(f"✅ Fetched {len(videos)} long-form videos and {len(shorts)} shorts")
         
+        # Debug: Print sample video fields to see what's available
+        if videos:
+            print(f"\n🔍 Sample video fields available:")
+            sample_video = videos[0]
+            print(f"   Keys: {list(sample_video.keys())}")
+            print(f"   Channel field: {sample_video.get('channel') or sample_video.get('channel_name') or sample_video.get('channelName') or 'NOT FOUND'}")
+            print(f"   Category field: {sample_video.get('category') or sample_video.get('categoryName') or 'NOT FOUND'}")
+        
         # Filter by category and view thresholds
         high_performing_videos = []
         high_performing_shorts = []
@@ -559,7 +567,23 @@ def send_to_slack():
         # Long-form: views > custom threshold
         for video in videos:
             views = int(video.get('views', video.get('view_count', 0)) or 0)
-            video_category = video.get('category', '')
+            
+            # Try multiple field names for category
+            video_category = (
+                video.get('category') or 
+                video.get('categoryName') or 
+                video.get('channel_category') or 
+                ''
+            )
+            
+            # Try multiple field names for channel name
+            channel_name = (
+                video.get('channel_name') or
+                video.get('channel') or
+                video.get('channelName') or
+                video.get('channel_title') or
+                'Unknown'
+            )
             
             # Filter by category if not "all"
             if category_filter != 'all':
@@ -570,19 +594,35 @@ def send_to_slack():
             if views >= long_form_threshold:
                 high_performing_videos.append({
                     'title': video.get('title', 'Untitled'),
-                    'channel': video.get('channel_name', 'Unknown'),
+                    'channel': channel_name,
                     'views': views,
                     'url': f"https://youtube.com/watch?v={video.get('video_id', '')}",
                     'published': video.get('published_at', ''),
                     'thumbnail': video.get('thumbnail_url', ''),
-                    'category': video_category,
+                    'category': video_category if video_category else 'Unknown',
                     'type': 'Long-form'
                 })
         
         # Shorts: views > custom threshold
         for video in shorts:
             views = int(video.get('views', video.get('view_count', 0)) or 0)
-            video_category = video.get('category', '')
+            
+            # Try multiple field names for category
+            video_category = (
+                video.get('category') or 
+                video.get('categoryName') or 
+                video.get('channel_category') or 
+                ''
+            )
+            
+            # Try multiple field names for channel name
+            channel_name = (
+                video.get('channel_name') or
+                video.get('channel') or
+                video.get('channelName') or
+                video.get('channel_title') or
+                'Unknown'
+            )
             
             # Filter by category if not "all"
             if category_filter != 'all':
@@ -593,12 +633,12 @@ def send_to_slack():
             if views >= shorts_threshold:
                 high_performing_shorts.append({
                     'title': video.get('title', 'Untitled'),
-                    'channel': video.get('channel_name', 'Unknown'),
+                    'channel': channel_name,
                     'views': views,
                     'url': f"https://youtube.com/watch?v={video.get('video_id', '')}",
                     'published': video.get('published_at', ''),
                     'thumbnail': video.get('thumbnail_url', ''),
-                    'category': video_category,
+                    'category': video_category if video_category else 'Unknown',
                     'type': 'Short'
                 })
         
