@@ -1249,23 +1249,28 @@ def trigger_scheduler():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-# SCHEDULER TEMPORARILY DISABLED - Manual only for now
 # Load scheduler configuration on startup
-# startup_config = load_scheduler_config()
-# if startup_config and startup_config.get('enabled'):
-#     try:
-#         scheduler.add_job(
-#             func=scheduled_slack_notification,
-#             trigger=IntervalTrigger(days=startup_config.get('interval_days', 3)),
-#             id='slack_notification',
-#             name='Slack Notification',
-#             replace_existing=True
-#         )
-#         print(f"✅ Scheduler loaded from config - will run every {startup_config.get('interval_days', 3)} days")
-#     except Exception as e:
-#         print(f"⚠️ Failed to start scheduler: {e}")
+# Check for environment variable to force disable scheduler
+force_disable = os.environ.get('DISABLE_SCHEDULER', 'true').lower() == 'true'
 
-print("⚠️ Automatic scheduler is currently disabled - use manual 'Find & Send to Slack Now' button")
+if force_disable:
+    print("⚠️ Scheduler forcefully disabled via DISABLE_SCHEDULER env var - use manual button only")
+else:
+    startup_config = load_scheduler_config()
+    if startup_config and startup_config.get('enabled'):
+        try:
+            scheduler.add_job(
+                func=scheduled_slack_notification,
+                trigger=IntervalTrigger(days=startup_config.get('interval_days', 3)),
+                id='slack_notification',
+                name='Slack Notification',
+                replace_existing=True
+            )
+            print(f"✅ Scheduler enabled - will run every {startup_config.get('interval_days', 3)} days")
+        except Exception as e:
+            print(f"⚠️ Failed to start scheduler: {e}")
+    else:
+        print("⚠️ Scheduler is disabled - use manual 'Find & Send to Slack Now' button")
 
 
 if __name__ == '__main__':
