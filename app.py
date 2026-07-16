@@ -612,12 +612,18 @@ def send_to_slack():
                 'videos_found': 0
             })
         
-        # Sort by views (already sorted from API, but combine and re-sort)
-        all_videos = sorted(
-            high_performing_videos + high_performing_shorts,
+        # Sort each type by views
+        high_performing_videos_sorted = sorted(
+            high_performing_videos,
             key=lambda x: x['views'],
             reverse=True
-        )[:20]  # Top 20
+        )
+        
+        high_performing_shorts_sorted = sorted(
+            high_performing_shorts,
+            key=lambda x: x['views'],
+            reverse=True
+        )
         
         # Get category name for display
         category_names = {
@@ -630,55 +636,87 @@ def send_to_slack():
         }
         category_display = category_names.get(category_filter, category_filter)
         
+        total_videos = len(high_performing_videos_sorted) + len(high_performing_shorts_sorted)
+        
         # Format Slack message
         slack_blocks = [
             {
                 "type": "header",
                 "text": {
                     "type": "plain_text",
-                    "text": f"🔥 High-Performing Videos - Last {days_back} Days"
+                    "text": f"High-Performing Videos - Last {days_back} Days"
                 }
             },
             {
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": f"Found *{len(all_videos)}* high-performing videos in *{category_display}*\n_Long-form (500K+ views): {len(high_performing_videos)} | Shorts (100K+ views): {len(high_performing_shorts)}_"
+                    "text": f"*Found {total_videos} videos in {category_display}*\nLong-form: {len(high_performing_videos_sorted)} | Shorts: {len(high_performing_shorts_sorted)}"
                 }
             },
             {"type": "divider"}
         ]
         
-        # Add top videos
-        for i, video in enumerate(all_videos[:10], 1):
-            views_formatted = f"{video['views']:,}"
-            category_emoji = {
-                'Indian Finance': '🇮🇳',
-                'Global Finance': '🌍',
-                'Business Case Studies': '📊',
-                'Podcasts': '🎙️',
-                'Others': '📺'
-            }.get(video.get('category', ''), '📺')
+        # Add Long-form Videos Section
+        if high_performing_videos_sorted:
+            slack_blocks.append({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*LONG-FORM VIDEOS ({len(high_performing_videos_sorted)})*"
+                }
+            })
+            
+            # Build bullet list for long-form
+            lf_bullets = []
+            for i, video in enumerate(high_performing_videos_sorted, 1):
+                views_formatted = f"{video['views']:,}"
+                published_date = video['published'][:10] if video['published'] else 'Unknown'
+                bullet = f"• *{video['title']}*\n  Channel: {video['channel']}\n  Views: {views_formatted}\n  Category: {video.get('category', 'Unknown')}\n  Published: {published_date}\n  <{video['url']}|Watch>"
+                lf_bullets.append(bullet)
+            
+            # Slack has a limit of ~3000 chars per text block, so split if needed
+            slack_blocks.append({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": "\n\n".join(lf_bullets)
+                }
+            })
+            
+            slack_blocks.append({"type": "divider"})
+        
+        # Add Shorts Section
+        if high_performing_shorts_sorted:
+            slack_blocks.append({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*SHORT-FORM VIDEOS ({len(high_performing_shorts_sorted)})*"
+                }
+            })
+            
+            # Build bullet list for shorts
+            sf_bullets = []
+            for i, video in enumerate(high_performing_shorts_sorted, 1):
+                views_formatted = f"{video['views']:,}"
+                published_date = video['published'][:10] if video['published'] else 'Unknown'
+                bullet = f"• *{video['title']}*\n  Channel: {video['channel']}\n  Views: {views_formatted}\n  Category: {video.get('category', 'Unknown')}\n  Published: {published_date}\n  <{video['url']}|Watch>"
+                sf_bullets.append(bullet)
             
             slack_blocks.append({
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": f"*{i}. {video['title'][:100]}*\n📺 {video['channel']} | 👁️ {views_formatted} views\n🎬 {video['type']} | {category_emoji} {video.get('category', 'Unknown')} | 📅 {video['published'][:10]}\n<{video['url']}|Watch on YouTube>"
+                    "text": "\n\n".join(sf_bullets)
                 }
             })
-            if video['thumbnail']:
-                slack_blocks[-1]["accessory"] = {
-                    "type": "image",
-                    "image_url": video['thumbnail'],
-                    "alt_text": "thumbnail"
-                }
         
         # Send to Slack
         print(f"📤 Sending to Slack...")
         slack_payload = {
             "blocks": slack_blocks,
-            "text": f"Found {len(all_videos)} high-performing videos"
+            "text": f"Found {total_videos} high-performing videos"
         }
         
         response = http_requests.post(
@@ -691,10 +729,10 @@ def send_to_slack():
             print("✅ Slack notification sent successfully")
             return jsonify({
                 'success': True,
-                'message': f'Sent {len(all_videos)} high-performing videos to Slack',
-                'videos_found': len(all_videos),
-                'long_form': len(high_performing_videos),
-                'shorts': len(high_performing_shorts)
+                'message': f'Sent {total_videos} high-performing videos to Slack',
+                'videos_found': total_videos,
+                'long_form': len(high_performing_videos_sorted),
+                'shorts': len(high_performing_shorts_sorted)
             })
         else:
             print(f"❌ Slack API error: {response.status_code}")
