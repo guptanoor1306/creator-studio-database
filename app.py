@@ -9,6 +9,7 @@ from channel_categories import categorize_channels, get_channel_category, get_ca
 from datetime import datetime, timedelta
 import os
 import traceback
+import requests as http_requests
 
 app = Flask(__name__)
 
@@ -484,6 +485,207 @@ def preview_data():
         
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
+
+
+@app.route('/api/send-to-slack', methods=['POST'])
+def send_to_slack():
+    """Find outlier videos and send to Slack"""
+    try:
+        print("\n" + "="*70)
+        print("📨 SLACK NOTIFICATION REQUEST")
+        print("="*70)
+        
+        data = request.get_json(silent=True)
+        if not data:
+            return jsonify({'success': False, 'error': 'Invalid request format'}), 400
+        
+        # Get configuration
+        bearer_token = data.get('bearerToken', '')
+        slack_webhook_url = data.get('slackWebhookUrl', '')
+        days_back = int(data.get('daysBack', 7))
+        indian_niche_only = data.get('indianNicheOnly', True)
+        
+        if not bearer_token:
+            return jsonify({'success': False, 'error': 'Bearer token is required'}), 400
+        
+        if not slack_webhook_url:
+            return jsonify({'success': False, 'error': 'Slack webhook URL is required'}), 400
+        
+        print(f"✅ Configuration:")
+        print(f"   Days back: {days_back}")
+        print(f"   Indian niche only: {indian_niche_only}")
+        
+        # Calculate date range
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=days_back)
+        start_date_str = start_date.strftime('%Y-%m-%d')
+        end_date_str = end_date.strftime('%Y-%m-%d')
+        
+        print(f"📅 Date range: {start_date_str} to {end_date_str}")
+        
+        # Create exporter and fetch videos
+        exporter = CSDataExporter(bearer_token)
+        
+        # Fetch all videos (both shorts and long-form)
+        print("📡 Fetching videos...")
+        videos = exporter.fetch_videos(
+            start_date=start_date_str,
+            end_date=end_date_str,
+            channel_ids=None,
+            sort_by='outlier_score',
+            is_short=False,
+            include_transcripts=False
+        )
+        
+        shorts = exporter.fetch_videos(
+            start_date=start_date_str,
+            end_date=end_date_str,
+            channel_ids=None,
+            sort_by='outlier_score',
+            is_short=True,
+            include_transcripts=False
+        )
+        
+        print(f"✅ Fetched {len(videos)} long-form videos and {len(shorts)} shorts")
+        
+        # Filter outliers
+        outlier_videos = []
+        outlier_shorts = []
+        
+        # Long-form: outliers OR views > 500K
+        for video in videos:
+            outlier_score = float(video.get('outlier_score', video.get('outlierScore', 0)) or 0)
+            views = int(video.get('views', video.get('view_count', 0)) or 0)
+            category = video.get('category', '').lower()
+            
+            # Check if it's Indian niche
+            is_indian_niche = 'indian' in category or 'india' in video.get('channel_name', '').lower()
+            
+            if indian_niche_only and not is_indian_niche:
+                continue
+            
+            # Check if it's an outlier (>2x) OR high views
+            if outlier_score >= 2.0 or views >= 500000:
+                outlier_videos.append({
+                    'title': video.get('title', 'Untitled'),
+                    'channel': video.get('channel_name', 'Unknown'),
+                    'views': views,
+                    'outlier_score': outlier_score,
+                    'url': f"https://youtube.com/watch?v={video.get('video_id', '')}",
+                    'published': video.get('published_at', ''),
+                    'thumbnail': video.get('thumbnail_url', ''),
+                    'type': 'Long-form'
+                })
+        
+        # Shorts: outliers OR views > 100K
+        for video in shorts:
+            outlier_score = float(video.get('outlier_score', video.get('outlierScore', 0)) or 0)
+            views = int(video.get('views', video.get('view_count', 0)) or 0)
+            category = video.get('category', '').lower()
+            
+            is_indian_niche = 'indian' in category or 'india' in video.get('channel_name', '').lower()
+            
+            if indian_niche_only and not is_indian_niche:
+                continue
+            
+            if outlier_score >= 2.0 or views >= 100000:
+                outlier_shorts.append({
+                    'title': video.get('title', 'Untitled'),
+                    'channel': video.get('channel_name', 'Unknown'),
+                    'views': views,
+                    'outlier_score': outlier_score,
+                    'url': f"https://youtube.com/watch?v={video.get('video_id', '')}",
+                    'published': video.get('published_at', ''),
+                    'thumbnail': video.get('thumbnail_url', ''),
+                    'type': 'Short'
+                })
+        
+        print(f"🎯 Found {len(outlier_videos)} outlier long-form videos")
+        print(f"🎯 Found {len(outlier_shorts)} outlier shorts")
+        
+        if not outlier_videos and not outlier_shorts:
+            return jsonify({
+                'success': True,
+                'message': 'No outliers found matching criteria',
+                'videos_found': 0
+            })
+        
+        # Sort by outlier score
+        all_outliers = sorted(
+            outlier_videos + outlier_shorts,
+            key=lambda x: x['outlier_score'],
+            reverse=True
+        )[:20]  # Top 20
+        
+        # Format Slack message
+        slack_blocks = [
+            {
+                "type": "header",
+                "text": {
+                    "type": "plain_text",
+                    "text": f"🔥 Outlier Videos Alert - Last {days_back} Days"
+                }
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"Found *{len(all_outliers)}* outlier videos{' in Indian niche' if indian_niche_only else ''}\n_Long-form: {len(outlier_videos)} | Shorts: {len(outlier_shorts)}_"
+                }
+            },
+            {"type": "divider"}
+        ]
+        
+        # Add top videos
+        for i, video in enumerate(all_outliers[:10], 1):
+            views_formatted = f"{video['views']:,}"
+            slack_blocks.append({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*{i}. {video['title'][:100]}*\n📺 {video['channel']} | 👁️ {views_formatted} views | 🔥 {video['outlier_score']:.1f}x outlier\n🎬 {video['type']} | 📅 {video['published'][:10]}\n<{video['url']}|Watch on YouTube>"
+                }
+            })
+            if video['thumbnail']:
+                slack_blocks[-1]["accessory"] = {
+                    "type": "image",
+                    "image_url": video['thumbnail'],
+                    "alt_text": "thumbnail"
+                }
+        
+        # Send to Slack
+        print(f"📤 Sending to Slack...")
+        slack_payload = {
+            "blocks": slack_blocks,
+            "text": f"Found {len(all_outliers)} outlier videos"
+        }
+        
+        response = http_requests.post(
+            slack_webhook_url,
+            json=slack_payload,
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            print("✅ Slack notification sent successfully")
+            return jsonify({
+                'success': True,
+                'message': f'Sent {len(all_outliers)} outlier videos to Slack',
+                'videos_found': len(all_outliers),
+                'long_form': len(outlier_videos),
+                'shorts': len(outlier_shorts)
+            })
+        else:
+            print(f"❌ Slack API error: {response.status_code}")
+            return jsonify({
+                'success': False,
+                'error': f'Slack webhook returned status {response.status_code}'
+            }), 500
+        
+    except Exception as e:
+        print(f"❌ Error sending to Slack: {e}")
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 if __name__ == '__main__':
