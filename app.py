@@ -503,7 +503,7 @@ def send_to_slack():
         bearer_token = data.get('bearerToken', '')
         slack_webhook_url = data.get('slackWebhookUrl', '')
         days_back = int(data.get('daysBack', 7))
-        indian_niche_only = data.get('indianNicheOnly', True)
+        category_filter = data.get('categoryFilter', 'all')
         
         if not bearer_token:
             return jsonify({'success': False, 'error': 'Bearer token is required'}), 400
@@ -513,7 +513,7 @@ def send_to_slack():
         
         print(f"✅ Configuration:")
         print(f"   Days back: {days_back}")
-        print(f"   Indian niche only: {indian_niche_only}")
+        print(f"   Category filter: {category_filter}")
         
         # Calculate date range
         end_date = datetime.now()
@@ -532,7 +532,7 @@ def send_to_slack():
             start_date=start_date_str,
             end_date=end_date_str,
             channel_ids=None,
-            sort_by='outlier_score',
+            sort_by='views',
             is_short=False,
             include_transcripts=False
         )
@@ -541,81 +541,90 @@ def send_to_slack():
             start_date=start_date_str,
             end_date=end_date_str,
             channel_ids=None,
-            sort_by='outlier_score',
+            sort_by='views',
             is_short=True,
             include_transcripts=False
         )
         
         print(f"✅ Fetched {len(videos)} long-form videos and {len(shorts)} shorts")
         
-        # Filter outliers
-        outlier_videos = []
-        outlier_shorts = []
+        # Filter by category and view thresholds
+        high_performing_videos = []
+        high_performing_shorts = []
         
-        # Long-form: outliers OR views > 500K
+        # Long-form: views > 500K
         for video in videos:
-            outlier_score = float(video.get('outlier_score', video.get('outlierScore', 0)) or 0)
             views = int(video.get('views', video.get('view_count', 0)) or 0)
-            category = video.get('category', '').lower()
+            video_category = video.get('category', '')
             
-            # Check if it's Indian niche
-            is_indian_niche = 'indian' in category or 'india' in video.get('channel_name', '').lower()
+            # Filter by category if not "all"
+            if category_filter != 'all':
+                if video_category.lower().replace(' ', '_') != category_filter:
+                    continue
             
-            if indian_niche_only and not is_indian_niche:
-                continue
-            
-            # Check if it's an outlier (>2x) OR high views
-            if outlier_score >= 2.0 or views >= 500000:
-                outlier_videos.append({
+            # Check if views meet threshold
+            if views >= 500000:
+                high_performing_videos.append({
                     'title': video.get('title', 'Untitled'),
                     'channel': video.get('channel_name', 'Unknown'),
                     'views': views,
-                    'outlier_score': outlier_score,
                     'url': f"https://youtube.com/watch?v={video.get('video_id', '')}",
                     'published': video.get('published_at', ''),
                     'thumbnail': video.get('thumbnail_url', ''),
+                    'category': video_category,
                     'type': 'Long-form'
                 })
         
-        # Shorts: outliers OR views > 100K
+        # Shorts: views > 100K
         for video in shorts:
-            outlier_score = float(video.get('outlier_score', video.get('outlierScore', 0)) or 0)
             views = int(video.get('views', video.get('view_count', 0)) or 0)
-            category = video.get('category', '').lower()
+            video_category = video.get('category', '')
             
-            is_indian_niche = 'indian' in category or 'india' in video.get('channel_name', '').lower()
+            # Filter by category if not "all"
+            if category_filter != 'all':
+                if video_category.lower().replace(' ', '_') != category_filter:
+                    continue
             
-            if indian_niche_only and not is_indian_niche:
-                continue
-            
-            if outlier_score >= 2.0 or views >= 100000:
-                outlier_shorts.append({
+            # Check if views meet threshold
+            if views >= 100000:
+                high_performing_shorts.append({
                     'title': video.get('title', 'Untitled'),
                     'channel': video.get('channel_name', 'Unknown'),
                     'views': views,
-                    'outlier_score': outlier_score,
                     'url': f"https://youtube.com/watch?v={video.get('video_id', '')}",
                     'published': video.get('published_at', ''),
                     'thumbnail': video.get('thumbnail_url', ''),
+                    'category': video_category,
                     'type': 'Short'
                 })
         
-        print(f"🎯 Found {len(outlier_videos)} outlier long-form videos")
-        print(f"🎯 Found {len(outlier_shorts)} outlier shorts")
+        print(f"🎯 Found {len(high_performing_videos)} high-performing long-form videos")
+        print(f"🎯 Found {len(high_performing_shorts)} high-performing shorts")
         
-        if not outlier_videos and not outlier_shorts:
+        if not high_performing_videos and not high_performing_shorts:
             return jsonify({
                 'success': True,
-                'message': 'No outliers found matching criteria',
+                'message': 'No high-performing videos found matching criteria',
                 'videos_found': 0
             })
         
-        # Sort by outlier score
-        all_outliers = sorted(
-            outlier_videos + outlier_shorts,
-            key=lambda x: x['outlier_score'],
+        # Sort by views (already sorted from API, but combine and re-sort)
+        all_videos = sorted(
+            high_performing_videos + high_performing_shorts,
+            key=lambda x: x['views'],
             reverse=True
         )[:20]  # Top 20
+        
+        # Get category name for display
+        category_names = {
+            'indian_finance': 'Indian Finance',
+            'global_finance': 'Global Finance',
+            'business_case_studies': 'Business Case Studies',
+            'podcasts': 'Podcasts',
+            'others': 'Others',
+            'all': 'All Categories'
+        }
+        category_display = category_names.get(category_filter, category_filter)
         
         # Format Slack message
         slack_blocks = [
@@ -623,27 +632,35 @@ def send_to_slack():
                 "type": "header",
                 "text": {
                     "type": "plain_text",
-                    "text": f"🔥 Outlier Videos Alert - Last {days_back} Days"
+                    "text": f"🔥 High-Performing Videos - Last {days_back} Days"
                 }
             },
             {
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": f"Found *{len(all_outliers)}* outlier videos{' in Indian niche' if indian_niche_only else ''}\n_Long-form: {len(outlier_videos)} | Shorts: {len(outlier_shorts)}_"
+                    "text": f"Found *{len(all_videos)}* high-performing videos in *{category_display}*\n_Long-form (500K+ views): {len(high_performing_videos)} | Shorts (100K+ views): {len(high_performing_shorts)}_"
                 }
             },
             {"type": "divider"}
         ]
         
         # Add top videos
-        for i, video in enumerate(all_outliers[:10], 1):
+        for i, video in enumerate(all_videos[:10], 1):
             views_formatted = f"{video['views']:,}"
+            category_emoji = {
+                'Indian Finance': '🇮🇳',
+                'Global Finance': '🌍',
+                'Business Case Studies': '📊',
+                'Podcasts': '🎙️',
+                'Others': '📺'
+            }.get(video.get('category', ''), '📺')
+            
             slack_blocks.append({
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": f"*{i}. {video['title'][:100]}*\n📺 {video['channel']} | 👁️ {views_formatted} views | 🔥 {video['outlier_score']:.1f}x outlier\n🎬 {video['type']} | 📅 {video['published'][:10]}\n<{video['url']}|Watch on YouTube>"
+                    "text": f"*{i}. {video['title'][:100]}*\n📺 {video['channel']} | 👁️ {views_formatted} views\n🎬 {video['type']} | {category_emoji} {video.get('category', 'Unknown')} | 📅 {video['published'][:10]}\n<{video['url']}|Watch on YouTube>"
                 }
             })
             if video['thumbnail']:
@@ -657,7 +674,7 @@ def send_to_slack():
         print(f"📤 Sending to Slack...")
         slack_payload = {
             "blocks": slack_blocks,
-            "text": f"Found {len(all_outliers)} outlier videos"
+            "text": f"Found {len(all_videos)} high-performing videos"
         }
         
         response = http_requests.post(
@@ -670,10 +687,10 @@ def send_to_slack():
             print("✅ Slack notification sent successfully")
             return jsonify({
                 'success': True,
-                'message': f'Sent {len(all_outliers)} outlier videos to Slack',
-                'videos_found': len(all_outliers),
-                'long_form': len(outlier_videos),
-                'shorts': len(outlier_shorts)
+                'message': f'Sent {len(all_videos)} high-performing videos to Slack',
+                'videos_found': len(all_videos),
+                'long_form': len(high_performing_videos),
+                'shorts': len(high_performing_shorts)
             })
         else:
             print(f"❌ Slack API error: {response.status_code}")

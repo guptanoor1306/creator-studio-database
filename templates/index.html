@@ -653,10 +653,14 @@
                         </div>
 
                         <div class="form-group">
-                            <label class="form-label">Filter By</label>
-                            <select id="slackNicheFilter" class="form-control">
-                                <option value="indian" selected>Indian Niche Only</option>
+                            <label class="form-label">Filter By Category</label>
+                            <select id="slackCategoryFilter" class="form-control">
                                 <option value="all">All Categories</option>
+                                <option value="indian_finance">🇮🇳 Indian Finance</option>
+                                <option value="global_finance">🌍 Global Finance</option>
+                                <option value="business_case_studies">📊 Business Case Studies</option>
+                                <option value="podcasts">🎙️ Podcasts</option>
+                                <option value="others">📺 Others</option>
                             </select>
                         </div>
                     </div>
@@ -664,9 +668,9 @@
                     <div style="background: white; padding: 15px; border-radius: 8px; margin: 15px 0;">
                         <strong style="color: #667eea;">📊 Criteria:</strong>
                         <ul style="margin: 10px 0 0 20px; color: #666; font-size: 0.9rem;">
-                            <li>Long-form videos: Outlier (2x+) OR Views > 500K</li>
-                            <li>Short-form videos: Outlier (2x+) OR Views > 100K</li>
-                            <li>Sorted by outlier score (top 20 sent)</li>
+                            <li>Long-form videos: Views > 500K</li>
+                            <li>Short-form videos: Views > 100K</li>
+                            <li>Sorted by view count (top 20 sent)</li>
                         </ul>
                     </div>
 
@@ -1055,7 +1059,7 @@
             const bearerToken = document.getElementById('bearerToken').value.trim();
             const slackWebhookUrl = document.getElementById('slackWebhookUrl').value.trim();
             const daysBack = document.getElementById('slackDaysBack').value;
-            const nicheFilter = document.getElementById('slackNicheFilter').value;
+            const categoryFilter = document.getElementById('slackCategoryFilter').value;
 
             if (!bearerToken) {
                 showAlert('Please enter your Bearer token first', 'error');
@@ -1075,7 +1079,7 @@
 
             const slackBtn = document.getElementById('slackBtn');
             slackBtn.disabled = true;
-            slackBtn.textContent = '🔍 Finding outliers...';
+            slackBtn.textContent = '🔍 Finding videos...';
             hideAlert();
 
             try {
@@ -1086,7 +1090,7 @@
                         bearerToken: bearerToken,
                         slackWebhookUrl: slackWebhookUrl,
                         daysBack: parseInt(daysBack),
-                        indianNicheOnly: nicheFilter === 'indian'
+                        categoryFilter: categoryFilter
                     })
                 });
 
