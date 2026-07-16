@@ -350,11 +350,33 @@ def get_channels():
             
             # Parse channels
             channels_data = channels_response.json()
+            print(f"📊 Channels API response type: {type(channels_data)}")
+            
             if isinstance(channels_data, list):
                 channels_list = channels_data
-            else:
+            elif isinstance(channels_data, dict):
+                # Try different possible keys
                 channels_list = channels_data.get('data', channels_data.get('channels', []))
+                
+                # Handle case where data might be nested
+                if isinstance(channels_list, dict) and 'channels' in channels_list:
+                    channels_list = channels_list['channels']
+                elif isinstance(channels_list, dict) and 'data' in channels_list:
+                    channels_list = channels_list['data']
+            else:
+                channels_list = []
+            
+            print(f"📊 Parsed channels_list type: {type(channels_list)}, length: {len(channels_list) if isinstance(channels_list, list) else 'N/A'}")
+            
+            # Ensure it's a list
+            if not isinstance(channels_list, list):
+                print(f"⚠️ channels_list is not a list, it's: {type(channels_list)}")
+                channels_list = []
+                
         except Exception as e:
+            print(f"❌ Error fetching channels: {e}")
+            import traceback
+            traceback.print_exc()
             return jsonify({'success': False, 'error': f'Failed to fetch channels: {str(e)}'})
         
         # Try to fetch categories from CS API (optional)
@@ -427,6 +449,11 @@ def get_channels():
         }
         
         for ch in channels_list:
+            # Safety check: ensure ch is a dictionary
+            if not isinstance(ch, dict):
+                print(f"⚠️ Skipping non-dict channel item: {type(ch)}")
+                continue
+                
             mongodb_id = ch.get('id', '')
             youtube_channel_id = ch.get('channel_id', '')
             
