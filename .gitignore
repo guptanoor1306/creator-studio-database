@@ -1,5 +1,6 @@
 # Config files with sensitive tokens
 config.py
+scheduler_config.json
 
 # Excel exports
 *.xlsx

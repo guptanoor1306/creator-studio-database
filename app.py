@@ -95,16 +95,18 @@ def scheduled_slack_notification():
         
         # First, fetch channels with categories to build mapping
         print("📡 Fetching channels and categories...")
+        channel_to_category = {}
+        categories_available = False
         try:
             channels_response = http_requests.get(
                 "https://confucius.zero1creatorstudio.com/api/user/channels",
                 headers={
                     "Authorization": f"Bearer {bearer_token}",
                     "Accept": "application/json"
-                }
+                },
+                timeout=10
             )
             
-            channel_to_category = {}
             if channels_response.status_code == 200:
                 channels_data = channels_response.json()
                 channels_list = channels_data if isinstance(channels_data, list) else channels_data.get('data', channels_data.get('channels', []))
@@ -112,13 +114,18 @@ def scheduled_slack_notification():
                 for channel in channels_list:
                     channel_id = channel.get('channel_id', channel.get('id', ''))
                     category = channel.get('category', channel.get('categoryName', ''))
-                    if channel_id:
+                    if channel_id and category:
                         channel_to_category[channel_id] = category
                 
-                print(f"✅ Mapped {len(channel_to_category)} channels to categories")
+                if channel_to_category:
+                    categories_available = True
+                    print(f"✅ Mapped {len(channel_to_category)} channels to categories")
+                else:
+                    print(f"⚠️ No categories found in response")
         except Exception as e:
             print(f"⚠️ Could not fetch channel categories: {e}")
-            channel_to_category = {}
+            print(f"   Continuing without category information...")
+            categories_available = False
         
         # Fetch videos
         print("📡 Fetching videos...")
@@ -150,45 +157,49 @@ def scheduled_slack_notification():
             views = int(video.get('views', video.get('view_count', 0)) or 0)
             channel_id = video.get('channel_id', '')
             channel_name = video.get('channel_title', 'Unknown')
-            video_category = channel_to_category.get(channel_id, '')
+            video_category = channel_to_category.get(channel_id, '') if categories_available else ''
             
-            if category_filter != 'all' and video_category:
+            if categories_available and category_filter != 'all' and video_category:
                 if video_category.lower().replace(' ', '_') != category_filter:
                     continue
             
             if views >= long_form_threshold:
-                high_performing_videos.append({
+                video_data = {
                     'title': video.get('title', 'Untitled'),
                     'channel': channel_name,
                     'views': views,
                     'url': f"https://youtube.com/watch?v={video.get('video_id', '')}",
                     'published': video.get('published_at', ''),
                     'thumbnail': video.get('thumbnail_url', video.get('thumbnails', {}).get('high', {}).get('url', '')),
-                    'category': video_category if video_category else 'Unknown',
                     'type': 'Long-form'
-                })
+                }
+                if categories_available and video_category:
+                    video_data['category'] = video_category
+                high_performing_videos.append(video_data)
         
         for video in shorts:
             views = int(video.get('views', video.get('view_count', 0)) or 0)
             channel_id = video.get('channel_id', '')
             channel_name = video.get('channel_title', 'Unknown')
-            video_category = channel_to_category.get(channel_id, '')
+            video_category = channel_to_category.get(channel_id, '') if categories_available else ''
             
-            if category_filter != 'all' and video_category:
+            if categories_available and category_filter != 'all' and video_category:
                 if video_category.lower().replace(' ', '_') != category_filter:
                     continue
             
             if views >= shorts_threshold:
-                high_performing_shorts.append({
+                video_data = {
                     'title': video.get('title', 'Untitled'),
                     'channel': channel_name,
                     'views': views,
                     'url': f"https://youtube.com/shorts/{video.get('video_id', '')}",
                     'published': video.get('published_at', ''),
                     'thumbnail': video.get('thumbnail_url', video.get('thumbnails', {}).get('high', {}).get('url', '')),
-                    'category': video_category if video_category else 'Unknown',
                     'type': 'Short'
-                })
+                }
+                if categories_available and video_category:
+                    video_data['category'] = video_category
+                high_performing_shorts.append(video_data)
         
         # Sort by views
         high_performing_videos_sorted = sorted(high_performing_videos, key=lambda x: x['views'], reverse=True)
@@ -242,7 +253,9 @@ def scheduled_slack_notification():
             for video in high_performing_videos_sorted:
                 video_text = f"• *{video['title']}*\n"
                 video_text += f"  Channel: {video['channel']}\n"
-                video_text += f"  Category: {video['category']}\n"
+                # Only add category if available
+                if 'category' in video:
+                    video_text += f"  Category: {video['category']}\n"
                 video_text += f"  Views: {video['views']:,}\n"
                 video_text += f"  Published: {video['published'][:10] if video['published'] else 'Unknown'}\n"
                 video_text += f"  Link: {video['url']}"
@@ -269,7 +282,9 @@ def scheduled_slack_notification():
             for video in high_performing_shorts_sorted:
                 video_text = f"• *{video['title']}*\n"
                 video_text += f"  Channel: {video['channel']}\n"
-                video_text += f"  Category: {video['category']}\n"
+                # Only add category if available
+                if 'category' in video:
+                    video_text += f"  Category: {video['category']}\n"
                 video_text += f"  Views: {video['views']:,}\n"
                 video_text += f"  Published: {video['published'][:10] if video['published'] else 'Unknown'}\n"
                 video_text += f"  Link: {video['url']}"
@@ -800,17 +815,19 @@ def send_to_slack():
         
         # First, fetch channels with categories to build mapping
         print("📡 Fetching channels and categories...")
+        channel_to_category = {}
+        categories_available = False
         try:
             channels_response = http_requests.get(
                 "https://confucius.zero1creatorstudio.com/api/user/channels",
                 headers={
                     "Authorization": f"Bearer {bearer_token}",
                     "Accept": "application/json"
-                }
+                },
+                timeout=10
             )
             
             # Build channel_id to category mapping
-            channel_to_category = {}
             if channels_response.status_code == 200:
                 channels_data = channels_response.json()
                 channels_list = channels_data if isinstance(channels_data, list) else channels_data.get('data', channels_data.get('channels', []))
@@ -818,13 +835,18 @@ def send_to_slack():
                 for channel in channels_list:
                     channel_id = channel.get('channel_id', channel.get('id', ''))
                     category = channel.get('category', channel.get('categoryName', ''))
-                    if channel_id:
+                    if channel_id and category:
                         channel_to_category[channel_id] = category
                 
-                print(f"✅ Mapped {len(channel_to_category)} channels to categories")
+                if channel_to_category:
+                    categories_available = True
+                    print(f"✅ Mapped {len(channel_to_category)} channels to categories")
+                else:
+                    print(f"⚠️ No categories found in response")
         except Exception as e:
             print(f"⚠️ Could not fetch channel categories: {e}")
-            channel_to_category = {}
+            print(f"   Continuing without category information...")
+            categories_available = False
         
         # Fetch all videos (both shorts and long-form)
         print("📡 Fetching videos...")
@@ -860,26 +882,29 @@ def send_to_slack():
             channel_id = video.get('channel_id', '')
             channel_name = video.get('channel_title', 'Unknown')
             
-            # Get category from mapping
-            video_category = channel_to_category.get(channel_id, '')
+            # Get category from mapping (if available)
+            video_category = channel_to_category.get(channel_id, '') if categories_available else ''
             
-            # Filter by category if not "all"
-            if category_filter != 'all' and video_category:
+            # Filter by category if not "all" and categories are available
+            if categories_available and category_filter != 'all' and video_category:
                 if video_category.lower().replace(' ', '_') != category_filter:
                     continue
             
             # Check if views meet threshold
             if views >= long_form_threshold:
-                high_performing_videos.append({
+                video_data = {
                     'title': video.get('title', 'Untitled'),
                     'channel': channel_name,
                     'views': views,
                     'url': f"https://youtube.com/watch?v={video.get('video_id', '')}",
                     'published': video.get('published_at', ''),
                     'thumbnail': video.get('thumbnail_url', video.get('thumbnails', {}).get('high', {}).get('url', '')),
-                    'category': video_category if video_category else 'Unknown',
                     'type': 'Long-form'
-                })
+                }
+                # Only include category if available
+                if categories_available and video_category:
+                    video_data['category'] = video_category
+                high_performing_videos.append(video_data)
         
         # Shorts: views > custom threshold
         for video in shorts:
@@ -889,26 +914,29 @@ def send_to_slack():
             channel_id = video.get('channel_id', '')
             channel_name = video.get('channel_title', 'Unknown')
             
-            # Get category from mapping
-            video_category = channel_to_category.get(channel_id, '')
+            # Get category from mapping (if available)
+            video_category = channel_to_category.get(channel_id, '') if categories_available else ''
             
-            # Filter by category if not "all"
-            if category_filter != 'all' and video_category:
+            # Filter by category if not "all" and categories are available
+            if categories_available and category_filter != 'all' and video_category:
                 if video_category.lower().replace(' ', '_') != category_filter:
                     continue
             
             # Check if views meet threshold
             if views >= shorts_threshold:
-                high_performing_shorts.append({
+                video_data = {
                     'title': video.get('title', 'Untitled'),
                     'channel': channel_name,
                     'views': views,
                     'url': f"https://youtube.com/shorts/{video.get('video_id', '')}",
                     'published': video.get('published_at', ''),
                     'thumbnail': video.get('thumbnail_url', video.get('thumbnails', {}).get('high', {}).get('url', '')),
-                    'category': video_category if video_category else 'Unknown',
                     'type': 'Short'
-                })
+                }
+                # Only include category if available
+                if categories_available and video_category:
+                    video_data['category'] = video_category
+                high_performing_shorts.append(video_data)
         
         print(f"🎯 Found {len(high_performing_videos)} high-performing long-form videos")
         print(f"🎯 Found {len(high_performing_shorts)} high-performing shorts")
@@ -980,7 +1008,11 @@ def send_to_slack():
             for i, video in enumerate(high_performing_videos_sorted, 1):
                 views_formatted = f"{video['views']:,}"
                 published_date = video['published'][:10] if video['published'] else 'Unknown'
-                bullet = f"• *{video['title']}*\n  Channel: {video['channel']}\n  Views: {views_formatted}\n  Category: {video.get('category', 'Unknown')}\n  Published: {published_date}\n  <{video['url']}|Watch>"
+                bullet = f"• *{video['title']}*\n  Channel: {video['channel']}\n  Views: {views_formatted}"
+                # Only add category if available
+                if 'category' in video:
+                    bullet += f"\n  Category: {video['category']}"
+                bullet += f"\n  Published: {published_date}\n  <{video['url']}|Watch>"
                 lf_bullets.append(bullet)
             
             # Slack has a limit of ~3000 chars per text block, so split if needed
@@ -1009,7 +1041,11 @@ def send_to_slack():
             for i, video in enumerate(high_performing_shorts_sorted, 1):
                 views_formatted = f"{video['views']:,}"
                 published_date = video['published'][:10] if video['published'] else 'Unknown'
-                bullet = f"• *{video['title']}*\n  Channel: {video['channel']}\n  Views: {views_formatted}\n  Category: {video.get('category', 'Unknown')}\n  Published: {published_date}\n  <{video['url']}|Watch>"
+                bullet = f"• *{video['title']}*\n  Channel: {video['channel']}\n  Views: {views_formatted}"
+                # Only add category if available
+                if 'category' in video:
+                    bullet += f"\n  Category: {video['category']}"
+                bullet += f"\n  Published: {published_date}\n  <{video['url']}|Watch>"
                 sf_bullets.append(bullet)
             
             slack_blocks.append({
