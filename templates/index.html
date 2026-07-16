@@ -791,6 +791,14 @@
                         <p style="color: #666; font-size: 0.85rem; margin-bottom: 10px;">
                             Enable to automatically send notifications every N days
                         </p>
+                        <div style="background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; padding: 8px; margin-bottom: 10px;">
+                            <p style="margin: 0; font-size: 0.8rem; color: #856404;">
+                                <strong>💡 Production Tip:</strong> For Railway/Docker deployment, use environment variables:<br>
+                                • <code style="background: #fff; padding: 2px 4px; border-radius: 2px;">CS_BEARER_TOKEN</code> - Your bearer token<br>
+                                • <code style="background: #fff; padding: 2px 4px; border-radius: 2px;">SLACK_WEBHOOK_URL</code> - Your webhook URL<br>
+                                <a href="ENV_SETUP.md" target="_blank" style="color: #004085; text-decoration: underline;">See ENV_SETUP.md for details</a>
+                            </p>
+                        </div>
                         <div class="form-group">
                             <label class="form-label">Run Every (Days)</label>
                             <select id="schedulerIntervalDays" class="form-control">
@@ -804,6 +812,9 @@
                         <button class="btn btn-secondary" onclick="saveSchedulerConfig()" id="saveSchedulerBtn" style="width: 100%; margin-top: 5px;" disabled>
                             💾 Save Automation Settings
                         </button>
+                        <p style="margin-top: 8px; font-size: 0.75rem; color: #999;">
+                            ⚠️ Bearer tokens expire periodically - update when needed
+                        </p>
                     </div>
                 </div>
                 </div>

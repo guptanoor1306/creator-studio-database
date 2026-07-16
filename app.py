@@ -71,15 +71,16 @@ def scheduled_slack_notification():
         
         print(f"\n⏰ Running scheduled Slack notification at {datetime.now()}")
         
-        bearer_token = config.get('bearer_token')
-        webhook_url = config.get('webhook_url')
+        # Get credentials from environment variables or config file
+        bearer_token = os.environ.get('CS_BEARER_TOKEN') or config.get('bearer_token')
+        webhook_url = os.environ.get('SLACK_WEBHOOK_URL') or config.get('webhook_url')
         days_back = config.get('days_back', 7)
         category_filter = config.get('category_filter', 'all')
         long_form_threshold = config.get('long_form_threshold', 500000)
         shorts_threshold = config.get('shorts_threshold', 100000)
         
         if not bearer_token or not webhook_url:
-            print("Missing bearer token or webhook URL in config")
+            print("Missing bearer token or webhook URL. Set CS_BEARER_TOKEN and SLACK_WEBHOOK_URL environment variables or configure in UI.")
             return
         
         # Calculate date range
@@ -333,68 +334,76 @@ def get_channels():
         if not bearer_token:
             return jsonify({'success': False, 'error': 'Bearer token is required'}), 400
         
-        # Fetch categories from CS API
-        categories_response = requests.get(
-            "https://confucius.zero1creatorstudio.com/api/channel-categories",
-            headers={
-                "Authorization": f"Bearer {bearer_token}",
-                "Accept": "application/json"
-            }
-        )
-        
         # Fetch channels from CS API
-        channels_response = requests.get(
-            "https://confucius.zero1creatorstudio.com/api/user/channels",
-            headers={
-                "Authorization": f"Bearer {bearer_token}",
-                "Accept": "application/json"
-            }
-        )
+        try:
+            channels_response = requests.get(
+                "https://confucius.zero1creatorstudio.com/api/user/channels",
+                headers={
+                    "Authorization": f"Bearer {bearer_token}",
+                    "Accept": "application/json"
+                },
+                timeout=10
+            )
+            
+            if channels_response.status_code != 200:
+                return jsonify({'success': False, 'error': f'Channels API returned status {channels_response.status_code}'})
+            
+            # Parse channels
+            channels_data = channels_response.json()
+            if isinstance(channels_data, list):
+                channels_list = channels_data
+            else:
+                channels_list = channels_data.get('data', channels_data.get('channels', []))
+        except Exception as e:
+            return jsonify({'success': False, 'error': f'Failed to fetch channels: {str(e)}'})
         
-        if channels_response.status_code != 200:
-            return jsonify({'success': False, 'error': f'Channels API returned status {channels_response.status_code}'})
-        
-        # Parse channels
-        channels_data = channels_response.json()
-        if isinstance(channels_data, list):
-            channels_list = channels_data
-        else:
-            channels_list = channels_data.get('data', channels_data.get('channels', []))
-        
-        # Parse categories from CS API
+        # Try to fetch categories from CS API (optional)
         cs_categories = {}
         channel_to_category = {}
         
-        if categories_response.status_code == 200:
-            categories_data = categories_response.json()
+        try:
+            categories_response = requests.get(
+                "https://confucius.zero1creatorstudio.com/api/channel-categories",
+                headers={
+                    "Authorization": f"Bearer {bearer_token}",
+                    "Accept": "application/json"
+                },
+                timeout=10
+            )
             
-            # Handle different response formats
-            if isinstance(categories_data, dict) and 'categories' in categories_data:
-                cs_categories_list = categories_data['categories']
-            elif isinstance(categories_data, list):
-                cs_categories_list = categories_data
-            else:
-                cs_categories_list = []
-            
-            # Build category mapping
-            for cat in cs_categories_list:
-                category_id = cat.get('id', cat.get('category_id', ''))
-                category_name = cat.get('name', cat.get('title', ''))
-                category_channels = cat.get('channels', cat.get('channel_ids', []))
+            if categories_response.status_code == 200:
+                categories_data = categories_response.json()
                 
-                # Map category name to our keys
-                category_key = category_name.lower().replace(' ', '_')
+                # Handle different response formats
+                if isinstance(categories_data, dict) and 'categories' in categories_data:
+                    cs_categories_list = categories_data['categories']
+                elif isinstance(categories_data, list):
+                    cs_categories_list = categories_data
+                else:
+                    cs_categories_list = []
                 
-                # Store category info
-                cs_categories[category_key] = {
-                    'id': category_id,
-                    'name': category_name,
-                    'channels': []
-                }
-                
-                # Map each channel to this category
-                for channel_id in category_channels:
-                    channel_to_category[channel_id] = category_key
+                # Build category mapping
+                for cat in cs_categories_list:
+                    category_id = cat.get('id', cat.get('category_id', ''))
+                    category_name = cat.get('name', cat.get('title', ''))
+                    category_channels = cat.get('channels', cat.get('channel_ids', []))
+                    
+                    # Map category name to our keys
+                    category_key = category_name.lower().replace(' ', '_')
+                    
+                    # Store category info
+                    cs_categories[category_key] = {
+                        'id': category_id,
+                        'name': category_name,
+                        'channels': []
+                    }
+                    
+                    # Map each channel to this category
+                    for channel_id in category_channels:
+                        channel_to_category[channel_id] = category_key
+        except Exception as e:
+            print(f"⚠️ Could not fetch channel categories: {e}")
+            print(f"   Continuing without category information...")
         
         # Format channels with category information
         formatted_channels = []

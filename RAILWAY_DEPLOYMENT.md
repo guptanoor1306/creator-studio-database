@@ -107,19 +107,39 @@ railway open
 
 ---
 
-## 🔧 Optional: Environment Variables
+## 🔧 Environment Variables
 
-Railway automatically sets the `PORT` variable. For production optimization, you can add:
+Railway automatically sets the `PORT` variable. You can add optional variables for optimization and automation.
+
+### For Automated Slack Notifications (Recommended)
+
+For production automated notifications, set these variables to avoid storing credentials in config files:
+
+**Variable Name**: `CS_BEARER_TOKEN`  
+**Value**: Your Creator Studio bearer token  
+**Purpose**: Authentication for automated data fetching
+
+**Variable Name**: `SLACK_WEBHOOK_URL`  
+**Value**: Your Slack webhook URL  
+**Purpose**: Automated Slack notifications
 
 **Variable Name**: `FLASK_ENV`  
-**Value**: `production`
+**Value**: `production`  
+**Purpose**: Optimization (optional)
 
 **How to add:**
 1. Go to your Railway project dashboard
 2. Click on your service
 3. Select **"Variables"** tab
 4. Click **"New Variable"**
-5. Add `FLASK_ENV` = `production`
+5. Add each variable with its value
+6. Railway will automatically restart the service
+
+**Important Notes:**
+- Environment variables take priority over UI-configured values
+- Credentials are encrypted and secure in Railway
+- Update `CS_BEARER_TOKEN` when it expires (see ENV_SETUP.md)
+- Manual operations through the UI still work without these variables
 
 ---
 
