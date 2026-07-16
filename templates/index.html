@@ -488,6 +488,44 @@
         .category-action-btn.deselect:hover {
             background: #5a6268;
         }
+
+        /* Tab Styles */
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 30px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+
+        .tab-button {
+            padding: 12px 24px;
+            background: none;
+            border: none;
+            border-bottom: 3px solid transparent;
+            font-size: 1rem;
+            font-weight: 600;
+            color: #666;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .tab-button:hover {
+            color: #667eea;
+            background: rgba(102, 126, 234, 0.05);
+        }
+
+        .tab-button.active {
+            color: #667eea;
+            border-bottom-color: #667eea;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
     </style>
 </head>
 <body>
@@ -499,8 +537,8 @@
 
         <div class="main-card">
             <div class="card-header">
-                <h2>Filters & Export Settings</h2>
-                <p>Configure your export parameters and download your data</p>
+                <h2>Creator Studio Tools</h2>
+                <p>Export data or send notifications to Slack</p>
             </div>
 
             <div class="card-body">
@@ -521,6 +559,15 @@
                     </button>
                 </div>
 
+                <!-- Tabs -->
+                <div class="tabs">
+                    <button class="tab-button active" onclick="switchTab('export')">📥 Export to Excel</button>
+                    <button class="tab-button" onclick="switchTab('slack')">📨 Slack Notifications</button>
+                </div>
+
+                <!-- Export Tab -->
+                <div id="exportTab" class="tab-content active">
+                
                 <!-- Channels Selection -->
                 <div class="section">
                     <div class="section-title">📺 Select Channels</div>
@@ -626,11 +673,46 @@
                     </label>
                 </div>
 
-                <!-- Slack Notifications -->
-                <div class="section" style="background: linear-gradient(135deg, rgba(102, 126, 234, 0.05) 0%, rgba(118, 75, 162, 0.05) 100%); padding: 20px; border-radius: 10px; border: 2px solid #667eea;">
-                    <div class="section-title">📨 Slack Notifications (New!)</div>
+                <!-- Preview Info -->
+                <div id="previewInfo" class="preview-info">
+                    <div class="preview-stats">
+                        <div class="stat-box">
+                            <div class="stat-value" id="previewCount">0</div>
+                            <div class="stat-label">Videos Found</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-value" id="previewRange">-</div>
+                            <div class="stat-label">Date Range</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Actions -->
+                <div class="actions">
+                    <button class="btn btn-secondary" onclick="previewExport()">
+                        🔍 Preview Count
+                    </button>
+                    <button class="btn btn-primary" onclick="exportData()" id="exportBtn">
+                        📥 Export to Excel
+                    </button>
+                </div>
+
+                <!-- Loading -->
+                <div id="loading" class="loading">
+                    <div class="spinner"></div>
+                    <p id="loadingText">Processing your request...</p>
+                </div>
+
+                </div>
+                <!-- End Export Tab -->
+
+                <!-- Slack Tab -->
+                <div id="slackTab" class="tab-content">
+                
+                <div class="section">
+                    <div class="section-title">📨 Slack Notifications</div>
                     <p style="color: #666; font-size: 0.9rem; margin-bottom: 15px;">
-                        Automatically detect and send outlier videos to Slack
+                        Automatically send high-performing videos to Slack
                     </p>
                     
                     <div class="form-group">
@@ -665,49 +747,42 @@
                         </div>
                     </div>
 
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">Long-form Threshold (Views)</label>
+                            <input type="number" id="slackLongFormThreshold" class="form-control" value="500000" min="0" step="10000" placeholder="500000">
+                            <small style="color: #666; display: block; margin-top: 5px;">
+                                Videos with views above this will be sent
+                            </small>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Shorts Threshold (Views)</label>
+                            <input type="number" id="slackShortsThreshold" class="form-control" value="100000" min="0" step="10000" placeholder="100000">
+                            <small style="color: #666; display: block; margin-top: 5px;">
+                                Shorts with views above this will be sent
+                            </small>
+                        </div>
+                    </div>
+
                     <div style="background: white; padding: 15px; border-radius: 8px; margin: 15px 0;">
-                        <strong style="color: #667eea;">📊 Criteria:</strong>
+                        <strong style="color: #667eea;">📊 How it works:</strong>
                         <ul style="margin: 10px 0 0 20px; color: #666; font-size: 0.9rem;">
-                            <li>Long-form videos: Views > 500K</li>
-                            <li>Short-form videos: Views > 100K</li>
-                            <li>Sorted by view count (top 20 sent)</li>
+                            <li>Fetches videos from the selected time range</li>
+                            <li>Filters by your category selection</li>
+                            <li>Applies view thresholds you set above</li>
+                            <li>Sends top 20 highest-performing videos to Slack</li>
                         </ul>
                     </div>
 
                     <button class="btn btn-primary" onclick="sendToSlack()" id="slackBtn" style="width: 100%; margin-top: 10px;">
-                        📨 Find & Send Outliers to Slack
+                        📨 Find & Send to Slack
                     </button>
                 </div>
 
-                <!-- Preview Info -->
-                <div id="previewInfo" class="preview-info">
-                    <div class="preview-stats">
-                        <div class="stat-box">
-                            <div class="stat-value" id="previewCount">0</div>
-                            <div class="stat-label">Videos Found</div>
-                        </div>
-                        <div class="stat-box">
-                            <div class="stat-value" id="previewRange">-</div>
-                            <div class="stat-label">Date Range</div>
-                        </div>
-                    </div>
                 </div>
+                <!-- End Slack Tab -->
 
-                <!-- Actions -->
-                <div class="actions">
-                    <button class="btn btn-secondary" onclick="previewExport()">
-                        🔍 Preview Count
-                    </button>
-                    <button class="btn btn-primary" onclick="exportData()" id="exportBtn">
-                        📥 Export to Excel
-                    </button>
-                </div>
-
-                <!-- Loading -->
-                <div id="loading" class="loading">
-                    <div class="spinner"></div>
-                    <p id="loadingText">Processing your request...</p>
-                </div>
             </div>
         </div>
     </div>
@@ -1060,6 +1135,8 @@
             const slackWebhookUrl = document.getElementById('slackWebhookUrl').value.trim();
             const daysBack = document.getElementById('slackDaysBack').value;
             const categoryFilter = document.getElementById('slackCategoryFilter').value;
+            const longFormThreshold = parseInt(document.getElementById('slackLongFormThreshold').value) || 500000;
+            const shortsThreshold = parseInt(document.getElementById('slackShortsThreshold').value) || 100000;
 
             if (!bearerToken) {
                 showAlert('Please enter your Bearer token first', 'error');
@@ -1090,7 +1167,9 @@
                         bearerToken: bearerToken,
                         slackWebhookUrl: slackWebhookUrl,
                         daysBack: parseInt(daysBack),
-                        categoryFilter: categoryFilter
+                        categoryFilter: categoryFilter,
+                        longFormThreshold: longFormThreshold,
+                        shortsThreshold: shortsThreshold
                     })
                 });
 
@@ -1106,7 +1185,28 @@
                 showAlert('Error: ' + error.message, 'error');
             } finally {
                 slackBtn.disabled = false;
-                slackBtn.textContent = '📨 Find & Send Outliers to Slack';
+                slackBtn.textContent = '📨 Find & Send to Slack';
+            }
+        }
+
+        function switchTab(tabName) {
+            // Hide all tabs
+            document.querySelectorAll('.tab-content').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            
+            // Remove active class from all buttons
+            document.querySelectorAll('.tab-button').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            
+            // Show selected tab
+            if (tabName === 'export') {
+                document.getElementById('exportTab').classList.add('active');
+                document.querySelectorAll('.tab-button')[0].classList.add('active');
+            } else if (tabName === 'slack') {
+                document.getElementById('slackTab').classList.add('active');
+                document.querySelectorAll('.tab-button')[1].classList.add('active');
             }
         }
     </script>

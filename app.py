@@ -504,6 +504,8 @@ def send_to_slack():
         slack_webhook_url = data.get('slackWebhookUrl', '')
         days_back = int(data.get('daysBack', 7))
         category_filter = data.get('categoryFilter', 'all')
+        long_form_threshold = int(data.get('longFormThreshold', 500000))
+        shorts_threshold = int(data.get('shortsThreshold', 100000))
         
         if not bearer_token:
             return jsonify({'success': False, 'error': 'Bearer token is required'}), 400
@@ -514,6 +516,8 @@ def send_to_slack():
         print(f"✅ Configuration:")
         print(f"   Days back: {days_back}")
         print(f"   Category filter: {category_filter}")
+        print(f"   Long-form threshold: {long_form_threshold:,}")
+        print(f"   Shorts threshold: {shorts_threshold:,}")
         
         # Calculate date range
         end_date = datetime.now()
@@ -552,7 +556,7 @@ def send_to_slack():
         high_performing_videos = []
         high_performing_shorts = []
         
-        # Long-form: views > 500K
+        # Long-form: views > custom threshold
         for video in videos:
             views = int(video.get('views', video.get('view_count', 0)) or 0)
             video_category = video.get('category', '')
@@ -563,7 +567,7 @@ def send_to_slack():
                     continue
             
             # Check if views meet threshold
-            if views >= 500000:
+            if views >= long_form_threshold:
                 high_performing_videos.append({
                     'title': video.get('title', 'Untitled'),
                     'channel': video.get('channel_name', 'Unknown'),
@@ -575,7 +579,7 @@ def send_to_slack():
                     'type': 'Long-form'
                 })
         
-        # Shorts: views > 100K
+        # Shorts: views > custom threshold
         for video in shorts:
             views = int(video.get('views', video.get('view_count', 0)) or 0)
             video_category = video.get('category', '')
@@ -586,7 +590,7 @@ def send_to_slack():
                     continue
             
             # Check if views meet threshold
-            if views >= 100000:
+            if views >= shorts_threshold:
                 high_performing_shorts.append({
                     'title': video.get('title', 'Untitled'),
                     'channel': video.get('channel_name', 'Unknown'),
