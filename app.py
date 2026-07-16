@@ -155,6 +155,11 @@ def scheduled_slack_notification():
         high_performing_shorts = []
         
         for video in videos:
+            # Safety check: ensure video is a dictionary
+            if not isinstance(video, dict):
+                print(f"⚠️ Skipping non-dict video in scheduled task: {type(video)}")
+                continue
+                
             views = int(video.get('views', video.get('view_count', 0)) or 0)
             channel_id = video.get('channel_id', '')
             channel_name = video.get('channel_title', 'Unknown')
@@ -179,6 +184,11 @@ def scheduled_slack_notification():
                 high_performing_videos.append(video_data)
         
         for video in shorts:
+            # Safety check: ensure video is a dictionary
+            if not isinstance(video, dict):
+                print(f"⚠️ Skipping non-dict short video in scheduled task: {type(video)}")
+                continue
+                
             views = int(video.get('views', video.get('view_count', 0)) or 0)
             channel_id = video.get('channel_id', '')
             channel_name = video.get('channel_title', 'Unknown')
@@ -666,6 +676,11 @@ def export_data():
         
         filtered_videos = []
         for video in videos:
+            # Safety check: ensure video is a dictionary
+            if not isinstance(video, dict):
+                print(f"⚠️ Skipping non-dict video in export: {type(video)}")
+                continue
+                
             # Filter by outlier score
             outlier = video.get('outlier_score', video.get('outlierScore', 0))
             try:
@@ -924,6 +939,11 @@ def send_to_slack():
         
         # Long-form: views > custom threshold
         for video in videos:
+            # Safety check: ensure video is a dictionary
+            if not isinstance(video, dict):
+                print(f"⚠️ Skipping non-dict video: {type(video)}")
+                continue
+                
             views = int(video.get('views', video.get('view_count', 0)) or 0)
             
             # Get channel info
@@ -956,6 +976,11 @@ def send_to_slack():
         
         # Shorts: views > custom threshold
         for video in shorts:
+            # Safety check: ensure video is a dictionary
+            if not isinstance(video, dict):
+                print(f"⚠️ Skipping non-dict short video: {type(video)}")
+                continue
+                
             views = int(video.get('views', video.get('view_count', 0)) or 0)
             
             # Get channel info
