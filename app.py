@@ -7,11 +7,23 @@ from flask import Flask, render_template, request, jsonify, send_file
 from cs_data_exporter import CSDataExporter
 from channel_categories import categorize_channels, get_channel_category, get_category_info, CATEGORIES
 from datetime import datetime, timedelta
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.interval import IntervalTrigger
 import os
 import traceback
 import requests as http_requests
+import atexit
+import json
 
 app = Flask(__name__)
+
+# Scheduler configuration storage
+SCHEDULER_CONFIG_FILE = os.path.join(os.path.dirname(__file__), 'scheduler_config.json')
+scheduler = BackgroundScheduler()
+scheduler.start()
+
+# Shut down the scheduler when exiting the app
+atexit.register(lambda: scheduler.shutdown())
 
 
 # Global error handler to always return JSON for API endpoints
@@ -26,6 +38,262 @@ def handle_error(error):
         }), 500
     # For non-API requests, let Flask handle it normally
     raise error
+
+
+# Scheduler configuration management
+def load_scheduler_config():
+    """Load scheduler configuration from file"""
+    if os.path.exists(SCHEDULER_CONFIG_FILE):
+        try:
+            with open(SCHEDULER_CONFIG_FILE, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Error loading scheduler config: {e}")
+    return None
+
+def save_scheduler_config(config):
+    """Save scheduler configuration to file"""
+    try:
+        with open(SCHEDULER_CONFIG_FILE, 'w') as f:
+            json.dump(config, f, indent=2)
+        return True
+    except Exception as e:
+        print(f"Error saving scheduler config: {e}")
+        return False
+
+def scheduled_slack_notification():
+    """Scheduled task to send Slack notifications"""
+    try:
+        config = load_scheduler_config()
+        if not config or not config.get('enabled'):
+            print("Scheduler disabled or no config found")
+            return
+        
+        print(f"\n⏰ Running scheduled Slack notification at {datetime.now()}")
+        
+        bearer_token = config.get('bearer_token')
+        webhook_url = config.get('webhook_url')
+        days_back = config.get('days_back', 7)
+        category_filter = config.get('category_filter', 'all')
+        long_form_threshold = config.get('long_form_threshold', 500000)
+        shorts_threshold = config.get('shorts_threshold', 100000)
+        
+        if not bearer_token or not webhook_url:
+            print("Missing bearer token or webhook URL in config")
+            return
+        
+        # Calculate date range
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=days_back)
+        start_date_str = start_date.strftime('%Y-%m-%d')
+        end_date_str = end_date.strftime('%Y-%m-%d')
+        
+        print(f"📅 Date range: {start_date_str} to {end_date_str}")
+        
+        # Create exporter and fetch videos
+        exporter = CSDataExporter(bearer_token)
+        
+        # First, fetch channels with categories to build mapping
+        print("📡 Fetching channels and categories...")
+        try:
+            channels_response = http_requests.get(
+                "https://confucius.zero1creatorstudio.com/api/user/channels",
+                headers={
+                    "Authorization": f"Bearer {bearer_token}",
+                    "Accept": "application/json"
+                }
+            )
+            
+            channel_to_category = {}
+            if channels_response.status_code == 200:
+                channels_data = channels_response.json()
+                channels_list = channels_data if isinstance(channels_data, list) else channels_data.get('data', channels_data.get('channels', []))
+                
+                for channel in channels_list:
+                    channel_id = channel.get('channel_id', channel.get('id', ''))
+                    category = channel.get('category', channel.get('categoryName', ''))
+                    if channel_id:
+                        channel_to_category[channel_id] = category
+                
+                print(f"✅ Mapped {len(channel_to_category)} channels to categories")
+        except Exception as e:
+            print(f"⚠️ Could not fetch channel categories: {e}")
+            channel_to_category = {}
+        
+        # Fetch videos
+        print("📡 Fetching videos...")
+        videos = exporter.fetch_videos(
+            start_date=start_date_str,
+            end_date=end_date_str,
+            channel_ids=None,
+            sort_by='views',
+            is_short=False,
+            include_transcripts=False
+        )
+        
+        shorts = exporter.fetch_videos(
+            start_date=start_date_str,
+            end_date=end_date_str,
+            channel_ids=None,
+            sort_by='views',
+            is_short=True,
+            include_transcripts=False
+        )
+        
+        print(f"✅ Fetched {len(videos)} long-form videos and {len(shorts)} shorts")
+        
+        # Filter high-performing content
+        high_performing_videos = []
+        high_performing_shorts = []
+        
+        for video in videos:
+            views = int(video.get('views', video.get('view_count', 0)) or 0)
+            channel_id = video.get('channel_id', '')
+            channel_name = video.get('channel_title', 'Unknown')
+            video_category = channel_to_category.get(channel_id, '')
+            
+            if category_filter != 'all' and video_category:
+                if video_category.lower().replace(' ', '_') != category_filter:
+                    continue
+            
+            if views >= long_form_threshold:
+                high_performing_videos.append({
+                    'title': video.get('title', 'Untitled'),
+                    'channel': channel_name,
+                    'views': views,
+                    'url': f"https://youtube.com/watch?v={video.get('video_id', '')}",
+                    'published': video.get('published_at', ''),
+                    'thumbnail': video.get('thumbnail_url', video.get('thumbnails', {}).get('high', {}).get('url', '')),
+                    'category': video_category if video_category else 'Unknown',
+                    'type': 'Long-form'
+                })
+        
+        for video in shorts:
+            views = int(video.get('views', video.get('view_count', 0)) or 0)
+            channel_id = video.get('channel_id', '')
+            channel_name = video.get('channel_title', 'Unknown')
+            video_category = channel_to_category.get(channel_id, '')
+            
+            if category_filter != 'all' and video_category:
+                if video_category.lower().replace(' ', '_') != category_filter:
+                    continue
+            
+            if views >= shorts_threshold:
+                high_performing_shorts.append({
+                    'title': video.get('title', 'Untitled'),
+                    'channel': channel_name,
+                    'views': views,
+                    'url': f"https://youtube.com/shorts/{video.get('video_id', '')}",
+                    'published': video.get('published_at', ''),
+                    'thumbnail': video.get('thumbnail_url', video.get('thumbnails', {}).get('high', {}).get('url', '')),
+                    'category': video_category if video_category else 'Unknown',
+                    'type': 'Short'
+                })
+        
+        # Sort by views
+        high_performing_videos_sorted = sorted(high_performing_videos, key=lambda x: x['views'], reverse=True)
+        high_performing_shorts_sorted = sorted(high_performing_shorts, key=lambda x: x['views'], reverse=True)
+        
+        total_videos = len(high_performing_videos_sorted) + len(high_performing_shorts_sorted)
+        
+        if total_videos == 0:
+            print("No high-performing videos found")
+            return
+        
+        # Format and send Slack message
+        category_names = {
+            'indian_finance': 'Indian Finance',
+            'global_finance': 'Global Finance',
+            'business_case_studies': 'Business Case Studies',
+            'podcasts': 'Podcasts',
+            'others': 'Others',
+            'all': 'All Categories'
+        }
+        category_display = category_names.get(category_filter, category_filter)
+        
+        slack_blocks = [
+            {
+                "type": "header",
+                "text": {
+                    "type": "plain_text",
+                    "text": f"High-Performing Content Report"
+                }
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*Category:* {category_display}\n*Date Range:* {start_date_str} to {end_date_str}\n*Total Videos:* {total_videos} ({len(high_performing_videos_sorted)} Long-form, {len(high_performing_shorts_sorted)} Shorts)"
+                }
+            },
+            {"type": "divider"}
+        ]
+        
+        # Add long-form section
+        if high_performing_videos_sorted:
+            slack_blocks.append({
+                "type": "header",
+                "text": {
+                    "type": "plain_text",
+                    "text": f"Long-Form Videos (>{long_form_threshold:,} views)"
+                }
+            })
+            
+            for video in high_performing_videos_sorted:
+                video_text = f"• *{video['title']}*\n"
+                video_text += f"  Channel: {video['channel']}\n"
+                video_text += f"  Category: {video['category']}\n"
+                video_text += f"  Views: {video['views']:,}\n"
+                video_text += f"  Published: {video['published'][:10] if video['published'] else 'Unknown'}\n"
+                video_text += f"  Link: {video['url']}"
+                
+                slack_blocks.append({
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": video_text
+                    }
+                })
+        
+        # Add shorts section
+        if high_performing_shorts_sorted:
+            slack_blocks.append({"type": "divider"})
+            slack_blocks.append({
+                "type": "header",
+                "text": {
+                    "type": "plain_text",
+                    "text": f"Shorts (>{shorts_threshold:,} views)"
+                }
+            })
+            
+            for video in high_performing_shorts_sorted:
+                video_text = f"• *{video['title']}*\n"
+                video_text += f"  Channel: {video['channel']}\n"
+                video_text += f"  Category: {video['category']}\n"
+                video_text += f"  Views: {video['views']:,}\n"
+                video_text += f"  Published: {video['published'][:10] if video['published'] else 'Unknown'}\n"
+                video_text += f"  Link: {video['url']}"
+                
+                slack_blocks.append({
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": video_text
+                    }
+                })
+        
+        # Send to Slack
+        slack_message = {"blocks": slack_blocks}
+        response = http_requests.post(webhook_url, json=slack_message)
+        
+        if response.status_code == 200:
+            print(f"✅ Successfully sent scheduled notification to Slack")
+        else:
+            print(f"❌ Failed to send to Slack: {response.status_code} - {response.text}")
+            
+    except Exception as e:
+        print(f"❌ Error in scheduled task: {e}")
+        traceback.print_exc()
 
 
 @app.route('/')
@@ -530,6 +798,34 @@ def send_to_slack():
         # Create exporter and fetch videos
         exporter = CSDataExporter(bearer_token)
         
+        # First, fetch channels with categories to build mapping
+        print("📡 Fetching channels and categories...")
+        try:
+            channels_response = http_requests.get(
+                "https://confucius.zero1creatorstudio.com/api/user/channels",
+                headers={
+                    "Authorization": f"Bearer {bearer_token}",
+                    "Accept": "application/json"
+                }
+            )
+            
+            # Build channel_id to category mapping
+            channel_to_category = {}
+            if channels_response.status_code == 200:
+                channels_data = channels_response.json()
+                channels_list = channels_data if isinstance(channels_data, list) else channels_data.get('data', channels_data.get('channels', []))
+                
+                for channel in channels_list:
+                    channel_id = channel.get('channel_id', channel.get('id', ''))
+                    category = channel.get('category', channel.get('categoryName', ''))
+                    if channel_id:
+                        channel_to_category[channel_id] = category
+                
+                print(f"✅ Mapped {len(channel_to_category)} channels to categories")
+        except Exception as e:
+            print(f"⚠️ Could not fetch channel categories: {e}")
+            channel_to_category = {}
+        
         # Fetch all videos (both shorts and long-form)
         print("📡 Fetching videos...")
         videos = exporter.fetch_videos(
@@ -552,14 +848,6 @@ def send_to_slack():
         
         print(f"✅ Fetched {len(videos)} long-form videos and {len(shorts)} shorts")
         
-        # Debug: Print sample video fields to see what's available
-        if videos:
-            print(f"\n🔍 Sample video fields available:")
-            sample_video = videos[0]
-            print(f"   Keys: {list(sample_video.keys())}")
-            print(f"   Channel field: {sample_video.get('channel') or sample_video.get('channel_name') or sample_video.get('channelName') or 'NOT FOUND'}")
-            print(f"   Category field: {sample_video.get('category') or sample_video.get('categoryName') or 'NOT FOUND'}")
-        
         # Filter by category and view thresholds
         high_performing_videos = []
         high_performing_shorts = []
@@ -568,25 +856,15 @@ def send_to_slack():
         for video in videos:
             views = int(video.get('views', video.get('view_count', 0)) or 0)
             
-            # Try multiple field names for category
-            video_category = (
-                video.get('category') or 
-                video.get('categoryName') or 
-                video.get('channel_category') or 
-                ''
-            )
+            # Get channel info
+            channel_id = video.get('channel_id', '')
+            channel_name = video.get('channel_title', 'Unknown')
             
-            # Try multiple field names for channel name
-            channel_name = (
-                video.get('channel_name') or
-                video.get('channel') or
-                video.get('channelName') or
-                video.get('channel_title') or
-                'Unknown'
-            )
+            # Get category from mapping
+            video_category = channel_to_category.get(channel_id, '')
             
             # Filter by category if not "all"
-            if category_filter != 'all':
+            if category_filter != 'all' and video_category:
                 if video_category.lower().replace(' ', '_') != category_filter:
                     continue
             
@@ -598,7 +876,7 @@ def send_to_slack():
                     'views': views,
                     'url': f"https://youtube.com/watch?v={video.get('video_id', '')}",
                     'published': video.get('published_at', ''),
-                    'thumbnail': video.get('thumbnail_url', ''),
+                    'thumbnail': video.get('thumbnail_url', video.get('thumbnails', {}).get('high', {}).get('url', '')),
                     'category': video_category if video_category else 'Unknown',
                     'type': 'Long-form'
                 })
@@ -607,25 +885,15 @@ def send_to_slack():
         for video in shorts:
             views = int(video.get('views', video.get('view_count', 0)) or 0)
             
-            # Try multiple field names for category
-            video_category = (
-                video.get('category') or 
-                video.get('categoryName') or 
-                video.get('channel_category') or 
-                ''
-            )
+            # Get channel info
+            channel_id = video.get('channel_id', '')
+            channel_name = video.get('channel_title', 'Unknown')
             
-            # Try multiple field names for channel name
-            channel_name = (
-                video.get('channel_name') or
-                video.get('channel') or
-                video.get('channelName') or
-                video.get('channel_title') or
-                'Unknown'
-            )
+            # Get category from mapping
+            video_category = channel_to_category.get(channel_id, '')
             
             # Filter by category if not "all"
-            if category_filter != 'all':
+            if category_filter != 'all' and video_category:
                 if video_category.lower().replace(' ', '_') != category_filter:
                     continue
             
@@ -635,9 +903,9 @@ def send_to_slack():
                     'title': video.get('title', 'Untitled'),
                     'channel': channel_name,
                     'views': views,
-                    'url': f"https://youtube.com/watch?v={video.get('video_id', '')}",
+                    'url': f"https://youtube.com/shorts/{video.get('video_id', '')}",
                     'published': video.get('published_at', ''),
-                    'thumbnail': video.get('thumbnail_url', ''),
+                    'thumbnail': video.get('thumbnail_url', video.get('thumbnails', {}).get('high', {}).get('url', '')),
                     'category': video_category if video_category else 'Unknown',
                     'type': 'Short'
                 })
@@ -787,6 +1055,107 @@ def send_to_slack():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/api/scheduler/config', methods=['GET', 'POST'])
+def scheduler_config():
+    """Get or set scheduler configuration"""
+    try:
+        if request.method == 'GET':
+            config = load_scheduler_config()
+            if config:
+                # Don't send bearer token to frontend for security
+                safe_config = config.copy()
+                safe_config['bearer_token'] = '***' if config.get('bearer_token') else ''
+                return jsonify({'success': True, 'config': safe_config})
+            else:
+                return jsonify({'success': True, 'config': None})
+        
+        elif request.method == 'POST':
+            data = request.get_json(silent=True)
+            if not data:
+                return jsonify({'success': False, 'error': 'Invalid request format'}), 400
+            
+            # Validate required fields if enabling
+            if data.get('enabled'):
+                required_fields = ['bearer_token', 'webhook_url']
+                missing = [f for f in required_fields if not data.get(f)]
+                if missing:
+                    return jsonify({
+                        'success': False,
+                        'error': f'Missing required fields: {", ".join(missing)}'
+                    }), 400
+            
+            # Save configuration
+            config = {
+                'enabled': data.get('enabled', False),
+                'bearer_token': data.get('bearer_token', ''),
+                'webhook_url': data.get('webhook_url', ''),
+                'days_back': int(data.get('days_back', 7)),
+                'category_filter': data.get('category_filter', 'all'),
+                'long_form_threshold': int(data.get('long_form_threshold', 500000)),
+                'shorts_threshold': int(data.get('shorts_threshold', 100000)),
+                'interval_days': int(data.get('interval_days', 3))
+            }
+            
+            if save_scheduler_config(config):
+                # Update scheduler
+                if config['enabled']:
+                    # Remove existing job if any
+                    if scheduler.get_job('slack_notification'):
+                        scheduler.remove_job('slack_notification')
+                    
+                    # Add new job
+                    scheduler.add_job(
+                        func=scheduled_slack_notification,
+                        trigger=IntervalTrigger(days=config['interval_days']),
+                        id='slack_notification',
+                        name='Slack Notification',
+                        replace_existing=True
+                    )
+                    print(f"✅ Scheduler enabled - will run every {config['interval_days']} days")
+                else:
+                    # Disable scheduler
+                    if scheduler.get_job('slack_notification'):
+                        scheduler.remove_job('slack_notification')
+                    print("⏸️ Scheduler disabled")
+                
+                return jsonify({'success': True, 'message': 'Configuration saved'})
+            else:
+                return jsonify({'success': False, 'error': 'Failed to save configuration'}), 500
+    
+    except Exception as e:
+        print(f"Error in scheduler config: {e}")
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/scheduler/trigger', methods=['POST'])
+def trigger_scheduler():
+    """Manually trigger the scheduled task"""
+    try:
+        scheduled_slack_notification()
+        return jsonify({'success': True, 'message': 'Scheduled task triggered'})
+    except Exception as e:
+        print(f"Error triggering scheduler: {e}")
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# Load scheduler configuration on startup
+startup_config = load_scheduler_config()
+if startup_config and startup_config.get('enabled'):
+    try:
+        scheduler.add_job(
+            func=scheduled_slack_notification,
+            trigger=IntervalTrigger(days=startup_config.get('interval_days', 3)),
+            id='slack_notification',
+            name='Slack Notification',
+            replace_existing=True
+        )
+        print(f"✅ Scheduler loaded from config - will run every {startup_config.get('interval_days', 3)} days")
+    except Exception as e:
+        print(f"⚠️ Failed to start scheduler: {e}")
+
+
 if __name__ == '__main__':
     # Get port from environment variable (for Railway) or default to 8080
     port = int(os.environ.get('PORT', 8080))
@@ -803,6 +1172,7 @@ if __name__ == '__main__':
     print("  • Sort by different metrics")
     print("  • Automatic transcript fetching")
     print("  • Download Excel files directly")
+    print("  • Automated Slack notifications")
     print("\n" + "=" * 70 + "\n")
     
     app.run(debug=debug_mode, host='0.0.0.0', port=port)

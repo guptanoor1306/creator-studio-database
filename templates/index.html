@@ -771,13 +771,41 @@
                             <li>Fetches videos from the selected time range</li>
                             <li>Filters by your category selection</li>
                             <li>Applies view thresholds you set above</li>
-                            <li>Sends top 20 highest-performing videos to Slack</li>
+                            <li>Sends all matching videos to Slack</li>
                         </ul>
                     </div>
 
                     <button class="btn btn-primary" onclick="sendToSlack()" id="slackBtn" style="width: 100%; margin-top: 10px;">
-                        📨 Find & Send to Slack
+                        📨 Find & Send to Slack Now
                     </button>
+
+                    <!-- Automation Section -->
+                    <div style="background: #f5f5f5; padding: 15px; border-radius: 8px; margin-top: 20px; border: 2px dashed #667eea;">
+                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">
+                            <strong style="color: #667eea;">⏰ Automation</strong>
+                            <label style="display: flex; align-items: center; cursor: pointer;">
+                                <input type="checkbox" id="schedulerEnabled" onchange="toggleScheduler()" style="margin-right: 5px;">
+                                <span id="schedulerStatus" style="font-size: 0.9rem; color: #666;">Disabled</span>
+                            </label>
+                        </div>
+                        <p style="color: #666; font-size: 0.85rem; margin-bottom: 10px;">
+                            Enable to automatically send notifications every N days
+                        </p>
+                        <div class="form-group">
+                            <label class="form-label">Run Every (Days)</label>
+                            <select id="schedulerIntervalDays" class="form-control">
+                                <option value="1">Every day</option>
+                                <option value="2">Every 2 days</option>
+                                <option value="3" selected>Every 3 days</option>
+                                <option value="7">Every 7 days</option>
+                                <option value="14">Every 14 days</option>
+                            </select>
+                        </div>
+                        <button class="btn btn-secondary" onclick="saveSchedulerConfig()" id="saveSchedulerBtn" style="width: 100%; margin-top: 5px;" disabled>
+                            💾 Save Automation Settings
+                        </button>
+                    </div>
+                </div>
                 </div>
 
                 </div>
@@ -1185,7 +1213,115 @@
                 showAlert('Error: ' + error.message, 'error');
             } finally {
                 slackBtn.disabled = false;
-                slackBtn.textContent = '📨 Find & Send to Slack';
+                slackBtn.textContent = '📨 Find & Send to Slack Now';
+            }
+        }
+
+        function toggleScheduler() {
+            const checkbox = document.getElementById('schedulerEnabled');
+            const status = document.getElementById('schedulerStatus');
+            const saveBtn = document.getElementById('saveSchedulerBtn');
+            
+            if (checkbox.checked) {
+                status.textContent = 'Enabled (click Save to activate)';
+                status.style.color = '#667eea';
+                saveBtn.disabled = false;
+            } else {
+                status.textContent = 'Disabled';
+                status.style.color = '#666';
+                saveBtn.disabled = false;
+            }
+        }
+
+        async function saveSchedulerConfig() {
+            const bearerToken = document.getElementById('bearerToken').value.trim();
+            const slackWebhookUrl = document.getElementById('slackWebhookUrl').value.trim();
+            const daysBack = document.getElementById('slackDaysBack').value;
+            const categoryFilter = document.getElementById('slackCategoryFilter').value;
+            const longFormThreshold = parseInt(document.getElementById('slackLongFormThreshold').value) || 500000;
+            const shortsThreshold = parseInt(document.getElementById('slackShortsThreshold').value) || 100000;
+            const enabled = document.getElementById('schedulerEnabled').checked;
+            const intervalDays = parseInt(document.getElementById('schedulerIntervalDays').value);
+
+            if (enabled) {
+                if (!bearerToken) {
+                    showAlert('Please enter your Bearer token first', 'error');
+                    return;
+                }
+
+                if (!slackWebhookUrl) {
+                    showAlert('Please enter your Slack webhook URL', 'error');
+                    return;
+                }
+
+                if (!slackWebhookUrl.startsWith('https://hooks.slack.com/')) {
+                    showAlert('Invalid Slack webhook URL', 'error');
+                    return;
+                }
+            }
+
+            const saveBtn = document.getElementById('saveSchedulerBtn');
+            const originalText = saveBtn.textContent;
+            saveBtn.disabled = true;
+            saveBtn.textContent = '💾 Saving...';
+
+            try {
+                const response = await fetch('/api/scheduler/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        enabled: enabled,
+                        bearer_token: bearerToken,
+                        webhook_url: slackWebhookUrl,
+                        days_back: parseInt(daysBack),
+                        category_filter: categoryFilter,
+                        long_form_threshold: longFormThreshold,
+                        shorts_threshold: shortsThreshold,
+                        interval_days: intervalDays
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showAlert(
+                        enabled 
+                            ? `✅ Automation enabled! Will run every ${intervalDays} day(s) checking last ${daysBack} days.` 
+                            : '✅ Automation disabled',
+                        'success'
+                    );
+                    const status = document.getElementById('schedulerStatus');
+                    status.textContent = enabled ? `Active (every ${intervalDays} days)` : 'Disabled';
+                    status.style.color = enabled ? '#4caf50' : '#666';
+                } else {
+                    showAlert('Error: ' + data.error, 'error');
+                }
+            } catch (error) {
+                showAlert('Error: ' + error.message, 'error');
+            } finally {
+                saveBtn.disabled = false;
+                saveBtn.textContent = originalText;
+            }
+        }
+
+        async function loadSchedulerConfig() {
+            try {
+                const response = await fetch('/api/scheduler/config');
+                const data = await response.json();
+
+                if (data.success && data.config) {
+                    const config = data.config;
+                    document.getElementById('schedulerEnabled').checked = config.enabled || false;
+                    document.getElementById('schedulerIntervalDays').value = config.interval_days || 3;
+                    
+                    const status = document.getElementById('schedulerStatus');
+                    if (config.enabled) {
+                        status.textContent = `Active (every ${config.interval_days} days)`;
+                        status.style.color = '#4caf50';
+                    }
+                }
+            } catch (error) {
+                console.log('No scheduler config loaded:', error);
             }
         }
 
@@ -1209,6 +1345,11 @@
                 document.querySelectorAll('.tab-button')[1].classList.add('active');
             }
         }
+
+        // Load scheduler config on page load
+        window.addEventListener('DOMContentLoaded', () => {
+            loadSchedulerConfig();
+        });
     </script>
 </body>
 </html>
