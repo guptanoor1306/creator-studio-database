@@ -351,27 +351,39 @@ def get_channels():
             # Parse channels
             channels_data = channels_response.json()
             print(f"📊 Channels API response type: {type(channels_data)}")
+            print(f"📊 Channels API response keys: {channels_data.keys() if isinstance(channels_data, dict) else 'N/A'}")
+            print(f"📊 First 500 chars of response: {str(channels_data)[:500]}")
             
             if isinstance(channels_data, list):
                 channels_list = channels_data
+                print(f"✅ Direct list with {len(channels_list)} items")
             elif isinstance(channels_data, dict):
                 # Try different possible keys
                 channels_list = channels_data.get('data', channels_data.get('channels', []))
+                print(f"📊 Extracted from dict, type: {type(channels_list)}")
                 
                 # Handle case where data might be nested
-                if isinstance(channels_list, dict) and 'channels' in channels_list:
-                    channels_list = channels_list['channels']
-                elif isinstance(channels_list, dict) and 'data' in channels_list:
-                    channels_list = channels_list['data']
+                if isinstance(channels_list, dict):
+                    print(f"📊 channels_list is dict with keys: {channels_list.keys()}")
+                    if 'channels' in channels_list:
+                        channels_list = channels_list['channels']
+                        print(f"✅ Extracted from nested 'channels' key")
+                    elif 'data' in channels_list:
+                        channels_list = channels_list['data']
+                        print(f"✅ Extracted from nested 'data' key")
+                    else:
+                        print(f"⚠️ Unknown dict structure, converting to empty list")
+                        channels_list = []
             else:
                 channels_list = []
             
-            print(f"📊 Parsed channels_list type: {type(channels_list)}, length: {len(channels_list) if isinstance(channels_list, list) else 'N/A'}")
+            print(f"📊 Final channels_list type: {type(channels_list)}, length: {len(channels_list) if isinstance(channels_list, list) else 'N/A'}")
             
             # Ensure it's a list
             if not isinstance(channels_list, list):
-                print(f"⚠️ channels_list is not a list, it's: {type(channels_list)}")
-                channels_list = []
+                print(f"❌ channels_list is STILL not a list, it's: {type(channels_list)}")
+                print(f"❌ Content: {channels_list}")
+                return jsonify({'success': False, 'error': f'Invalid API response structure. Expected list, got {type(channels_list).__name__}'})
                 
         except Exception as e:
             print(f"❌ Error fetching channels: {e}")
