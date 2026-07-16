@@ -40,6 +40,28 @@ def handle_error(error):
     raise error
 
 
+def get_video_thumbnail(video):
+    """Extract thumbnail URL from a video object (handles dict or list formats)."""
+    if not isinstance(video, dict):
+        return ''
+    url = video.get('thumbnail_url') or video.get('thumbnail')
+    if url:
+        return url
+    thumbnails = video.get('thumbnails')
+    if isinstance(thumbnails, dict):
+        for key in ('high', 'medium', 'default', 'standard'):
+            entry = thumbnails.get(key)
+            if isinstance(entry, dict) and entry.get('url'):
+                return entry['url']
+        if thumbnails.get('url'):
+            return thumbnails['url']
+    elif isinstance(thumbnails, list):
+        for entry in thumbnails:
+            if isinstance(entry, dict) and entry.get('url'):
+                return entry['url']
+    return ''
+
+
 # Scheduler configuration management
 def load_scheduler_config():
     """Load scheduler configuration from file"""
@@ -176,7 +198,7 @@ def scheduled_slack_notification():
                     'views': views,
                     'url': f"https://youtube.com/watch?v={video.get('video_id', '')}",
                     'published': video.get('published_at', ''),
-                    'thumbnail': video.get('thumbnail_url', video.get('thumbnails', {}).get('high', {}).get('url', '')),
+                    'thumbnail': get_video_thumbnail(video),
                     'type': 'Long-form'
                 }
                 if categories_available and video_category:
@@ -205,7 +227,7 @@ def scheduled_slack_notification():
                     'views': views,
                     'url': f"https://youtube.com/shorts/{video.get('video_id', '')}",
                     'published': video.get('published_at', ''),
-                    'thumbnail': video.get('thumbnail_url', video.get('thumbnails', {}).get('high', {}).get('url', '')),
+                    'thumbnail': get_video_thumbnail(video),
                     'type': 'Short'
                 }
                 if categories_available and video_category:
@@ -966,7 +988,7 @@ def send_to_slack():
                     'views': views,
                     'url': f"https://youtube.com/watch?v={video.get('video_id', '')}",
                     'published': video.get('published_at', ''),
-                    'thumbnail': video.get('thumbnail_url', video.get('thumbnails', {}).get('high', {}).get('url', '')),
+                    'thumbnail': get_video_thumbnail(video),
                     'type': 'Long-form'
                 }
                 # Only include category if available
@@ -1003,7 +1025,7 @@ def send_to_slack():
                     'views': views,
                     'url': f"https://youtube.com/shorts/{video.get('video_id', '')}",
                     'published': video.get('published_at', ''),
-                    'thumbnail': video.get('thumbnail_url', video.get('thumbnails', {}).get('high', {}).get('url', '')),
+                    'thumbnail': get_video_thumbnail(video),
                     'type': 'Short'
                 }
                 # Only include category if available
