@@ -62,6 +62,69 @@ def get_video_thumbnail(video):
     return ''
 
 
+def escape_slack_text(text):
+    """Escape special characters for Slack mrkdwn."""
+    if not text:
+        return ''
+    return (str(text)
+            .replace('&', '&amp;')
+            .replace('<', '&lt;')
+            .replace('>', '&gt;'))
+
+
+def format_video_bullet(video):
+    """Format a single video as a Slack mrkdwn bullet."""
+    views_formatted = f"{video['views']:,}"
+    published_date = video['published'][:10] if video.get('published') else 'Unknown'
+    title = escape_slack_text(video.get('title', 'Untitled'))
+    channel = escape_slack_text(video.get('channel', 'Unknown'))
+    bullet = f"• *{title}*\n  Channel: {channel}\n  Views: {views_formatted}"
+    if video.get('category'):
+        bullet += f"\n  Category: {escape_slack_text(video['category'])}"
+    bullet += f"\n  Published: {published_date}\n  <{video['url']}|Watch>"
+    return bullet
+
+
+def append_bullet_sections(blocks, bullets, max_chars=2800):
+    """Split bullets into multiple Slack section blocks (3000 char limit per block)."""
+    if not bullets:
+        return
+    current = []
+    current_len = 0
+    for bullet in bullets:
+        separator = 2 if current else 0  # "\n\n"
+        if current and current_len + separator + len(bullet) > max_chars:
+            blocks.append({
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": "\n\n".join(current)}
+            })
+            current = [bullet]
+            current_len = len(bullet)
+        else:
+            current.append(bullet)
+            current_len += separator + len(bullet)
+    if current:
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": "\n\n".join(current)}
+        })
+
+
+def send_slack_message(webhook_url, blocks, fallback_text):
+    """Post to Slack webhook and return (success, error_message)."""
+    payload = {
+        "username": os.environ.get('SLACK_USERNAME', 'Creator Studio Alerts'),
+        "blocks": blocks[:50],  # Slack max 50 blocks
+        "text": fallback_text
+    }
+    response = http_requests.post(webhook_url, json=payload, timeout=15)
+    if response.status_code == 200:
+        return True, None
+    error_detail = response.text.strip() or 'Unknown error'
+    print(f"❌ Slack API error: {response.status_code} - {error_detail}")
+    return False, f'Slack webhook returned status {response.status_code}: {error_detail[:300]}'
+
+
 # Scheduler configuration management
 def load_scheduler_config():
     """Load scheduler configuration from file"""
@@ -276,68 +339,43 @@ def scheduled_slack_notification():
         # Add long-form section
         if high_performing_videos_sorted:
             slack_blocks.append({
-                "type": "header",
+                "type": "section",
                 "text": {
-                    "type": "plain_text",
-                    "text": f"Long-Form Videos (>{long_form_threshold:,} views)"
+                    "type": "mrkdwn",
+                    "text": f"*LONG-FORM VIDEOS ({len(high_performing_videos_sorted)})*"
                 }
             })
-            
-            for video in high_performing_videos_sorted:
-                video_text = f"• *{video['title']}*\n"
-                video_text += f"  Channel: {video['channel']}\n"
-                # Only add category if available
-                if 'category' in video:
-                    video_text += f"  Category: {video['category']}\n"
-                video_text += f"  Views: {video['views']:,}\n"
-                video_text += f"  Published: {video['published'][:10] if video['published'] else 'Unknown'}\n"
-                video_text += f"  Link: {video['url']}"
-                
-                slack_blocks.append({
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": video_text
-                    }
-                })
+            append_bullet_sections(
+                slack_blocks,
+                [format_video_bullet(v) for v in high_performing_videos_sorted]
+            )
         
         # Add shorts section
         if high_performing_shorts_sorted:
             slack_blocks.append({"type": "divider"})
             slack_blocks.append({
-                "type": "header",
+                "type": "section",
                 "text": {
-                    "type": "plain_text",
-                    "text": f"Shorts (>{shorts_threshold:,} views)"
+                    "type": "mrkdwn",
+                    "text": f"*SHORT-FORM VIDEOS ({len(high_performing_shorts_sorted)})*"
                 }
             })
-            
-            for video in high_performing_shorts_sorted:
-                video_text = f"• *{video['title']}*\n"
-                video_text += f"  Channel: {video['channel']}\n"
-                # Only add category if available
-                if 'category' in video:
-                    video_text += f"  Category: {video['category']}\n"
-                video_text += f"  Views: {video['views']:,}\n"
-                video_text += f"  Published: {video['published'][:10] if video['published'] else 'Unknown'}\n"
-                video_text += f"  Link: {video['url']}"
-                
-                slack_blocks.append({
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": video_text
-                    }
-                })
+            append_bullet_sections(
+                slack_blocks,
+                [format_video_bullet(v) for v in high_performing_shorts_sorted]
+            )
         
         # Send to Slack
-        slack_message = {"blocks": slack_blocks}
-        response = http_requests.post(webhook_url, json=slack_message)
+        success, error = send_slack_message(
+            webhook_url,
+            slack_blocks,
+            f"Found {total_videos} high-performing videos"
+        )
         
-        if response.status_code == 200:
+        if success:
             print(f"✅ Successfully sent scheduled notification to Slack")
         else:
-            print(f"❌ Failed to send to Slack: {response.status_code} - {response.text}")
+            print(f"❌ Failed to send to Slack: {error}")
             
     except Exception as e:
         print(f"❌ Error in scheduled task: {e}")
@@ -1088,7 +1126,7 @@ def send_to_slack():
             {"type": "divider"}
         ]
         
-        # Add Long-form Videos Section
+        # Add long-form section
         if high_performing_videos_sorted:
             slack_blocks.append({
                 "type": "section",
@@ -1097,31 +1135,13 @@ def send_to_slack():
                     "text": f"*LONG-FORM VIDEOS ({len(high_performing_videos_sorted)})*"
                 }
             })
-            
-            # Build bullet list for long-form
-            lf_bullets = []
-            for i, video in enumerate(high_performing_videos_sorted, 1):
-                views_formatted = f"{video['views']:,}"
-                published_date = video['published'][:10] if video['published'] else 'Unknown'
-                bullet = f"• *{video['title']}*\n  Channel: {video['channel']}\n  Views: {views_formatted}"
-                # Only add category if available
-                if 'category' in video:
-                    bullet += f"\n  Category: {video['category']}"
-                bullet += f"\n  Published: {published_date}\n  <{video['url']}|Watch>"
-                lf_bullets.append(bullet)
-            
-            # Slack has a limit of ~3000 chars per text block, so split if needed
-            slack_blocks.append({
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": "\n\n".join(lf_bullets)
-                }
-            })
-            
+            append_bullet_sections(
+                slack_blocks,
+                [format_video_bullet(v) for v in high_performing_videos_sorted]
+            )
             slack_blocks.append({"type": "divider"})
         
-        # Add Shorts Section
+        # Add shorts section
         if high_performing_shorts_sorted:
             slack_blocks.append({
                 "type": "section",
@@ -1130,41 +1150,20 @@ def send_to_slack():
                     "text": f"*SHORT-FORM VIDEOS ({len(high_performing_shorts_sorted)})*"
                 }
             })
-            
-            # Build bullet list for shorts
-            sf_bullets = []
-            for i, video in enumerate(high_performing_shorts_sorted, 1):
-                views_formatted = f"{video['views']:,}"
-                published_date = video['published'][:10] if video['published'] else 'Unknown'
-                bullet = f"• *{video['title']}*\n  Channel: {video['channel']}\n  Views: {views_formatted}"
-                # Only add category if available
-                if 'category' in video:
-                    bullet += f"\n  Category: {video['category']}"
-                bullet += f"\n  Published: {published_date}\n  <{video['url']}|Watch>"
-                sf_bullets.append(bullet)
-            
-            slack_blocks.append({
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": "\n\n".join(sf_bullets)
-                }
-            })
+            append_bullet_sections(
+                slack_blocks,
+                [format_video_bullet(v) for v in high_performing_shorts_sorted]
+            )
         
         # Send to Slack
         print(f"📤 Sending to Slack...")
-        slack_payload = {
-            "blocks": slack_blocks,
-            "text": f"Found {total_videos} high-performing videos"
-        }
-        
-        response = http_requests.post(
+        success, error = send_slack_message(
             slack_webhook_url,
-            json=slack_payload,
-            timeout=10
+            slack_blocks,
+            f"Found {total_videos} high-performing videos"
         )
         
-        if response.status_code == 200:
+        if success:
             print("✅ Slack notification sent successfully")
             return jsonify({
                 'success': True,
@@ -1174,11 +1173,7 @@ def send_to_slack():
                 'shorts': len(high_performing_shorts_sorted)
             })
         else:
-            print(f"❌ Slack API error: {response.status_code}")
-            return jsonify({
-                'success': False,
-                'error': f'Slack webhook returned status {response.status_code}'
-            }), 500
+            return jsonify({'success': False, 'error': error}), 500
         
     except Exception as e:
         print(f"❌ Error sending to Slack: {e}")
