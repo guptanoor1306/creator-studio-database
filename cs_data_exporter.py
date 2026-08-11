@@ -57,6 +57,59 @@ class CSDataExporter:
         except requests.exceptions.RequestException as e:
             print(f"  ⚠️  Error fetching transcript: {e}")
             return None
+
+    def _parse_transcript_payload(self, transcript_data) -> str:
+        """Parse transcript API response into plain text."""
+        if not transcript_data:
+            return ''
+        if isinstance(transcript_data, str):
+            return transcript_data.strip()
+        if not isinstance(transcript_data, dict):
+            return str(transcript_data).strip()
+
+        transcript_raw = transcript_data.get('transcript', transcript_data.get('text', ''))
+        if isinstance(transcript_raw, list):
+            return ' '.join([
+                str(seg.get('text', '') or '')
+                for seg in transcript_raw
+                if isinstance(seg, dict) and seg.get('text')
+            ]).strip()
+        if isinstance(transcript_raw, str):
+            return transcript_raw.strip()
+        return str(transcript_raw).strip() if transcript_raw else ''
+
+    def get_transcript_text(self, video: dict, fetch_if_missing: bool = True) -> str:
+        """Get transcript text from video object, fetching from API if needed."""
+        existing = video.get('transcript_text', '')
+        if isinstance(existing, str) and len(existing.strip()) > 20:
+            return existing.strip()
+
+        raw = video.get('transcript', '')
+        if isinstance(raw, str) and len(raw.strip()) > 20:
+            video['transcript_text'] = raw.strip()
+            return raw.strip()
+        if isinstance(raw, list):
+            text = self._parse_transcript_payload({'transcript': raw})
+            if text:
+                video['transcript_text'] = text
+                return text
+
+        if not fetch_if_missing:
+            return ''
+
+        youtube_video_id = video.get('video_id', '')
+        if not youtube_video_id:
+            return ''
+
+        transcript_data = self.fetch_transcript(
+            youtube_video_id,
+            video.get('title', 'Unknown')
+        )
+        text = self._parse_transcript_payload(transcript_data)
+        if text:
+            video['transcript_text'] = text
+        time.sleep(0.3)
+        return text
     
     def fetch_videos(
         self,

@@ -14,6 +14,7 @@ import traceback
 import requests as http_requests
 import atexit
 import json
+import re
 
 app = Flask(__name__)
 
@@ -72,16 +73,60 @@ def escape_slack_text(text):
             .replace('>', '&gt;'))
 
 
+def generate_short_summary(transcript: str, title: str = '', description: str = '', max_len: int = 140) -> str:
+    """Create a one-line summary of a short from its transcript."""
+    text = (transcript or '').strip()
+    if not text and description:
+        text = description.strip().split('\n')[0].strip()
+    if not text:
+        return title or 'Summary unavailable'
+
+    text = re.sub(r'\s+', ' ', text)
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+    summary_parts = []
+    for sentence in sentences:
+        sentence = sentence.strip()
+        if len(sentence) < 20:
+            continue
+        summary_parts.append(sentence)
+        if len(' '.join(summary_parts)) >= 60 or len(summary_parts) >= 2:
+            break
+
+    summary = ' '.join(summary_parts) if summary_parts else text
+    if len(summary) > max_len:
+        summary = summary[:max_len].rsplit(' ', 1)[0].rstrip('.,!?') + '...'
+    return summary
+
+
+def enrich_short_video_data(exporter, video, video_data):
+    """Add one-line 'about' summary from transcript for Slack shorts."""
+    title = video.get('title', 'Untitled')
+    print(f"  📝 Summarizing short: {title[:60]}")
+    transcript = exporter.get_transcript_text(video)
+    video_data['about'] = generate_short_summary(
+        transcript,
+        title=title,
+        description=video.get('description', '')
+    )
+    return video_data
+
+
 def format_video_bullet(video):
     """Format a single video as a Slack mrkdwn bullet."""
     views_formatted = f"{video['views']:,}"
     published_date = video['published'][:10] if video.get('published') else 'Unknown'
     title = escape_slack_text(video.get('title', 'Untitled'))
     channel = escape_slack_text(video.get('channel', 'Unknown'))
+    is_short = video.get('type') == 'Short'
     bullet = f"• *{title}*\n  Channel: {channel}\n  Views: {views_formatted}"
     if video.get('category'):
         bullet += f"\n  Category: {escape_slack_text(video['category'])}"
-    bullet += f"\n  Published: {published_date}\n  <{video['url']}|Watch>"
+    if is_short:
+        about = video.get('about') or title
+        bullet += f"\n  About: {escape_slack_text(about)}"
+    else:
+        bullet += f"\n  Published: {published_date}"
+    bullet += f"\n  <{video['url']}|Watch>"
     return bullet
 
 
@@ -295,6 +340,7 @@ def scheduled_slack_notification():
                 }
                 if categories_available and video_category:
                     video_data['category'] = video_category
+                enrich_short_video_data(exporter, video, video_data)
                 high_performing_shorts.append(video_data)
         
         # Sort by views
@@ -1069,6 +1115,7 @@ def send_to_slack():
                 # Only include category if available
                 if categories_available and video_category:
                     video_data['category'] = video_category
+                enrich_short_video_data(exporter, video, video_data)
                 high_performing_shorts.append(video_data)
         
         print(f"🎯 Found {len(high_performing_videos)} high-performing long-form videos")

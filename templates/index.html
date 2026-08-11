@@ -771,6 +771,7 @@
                             <li>Fetches videos from the selected time range</li>
                             <li>Filters by your category selection</li>
                             <li>Applies view thresholds you set above</li>
+                            <li>For shorts: generates a one-line summary from transcript</li>
                             <li>Sends all matching videos to Slack</li>
                         </ul>
                     </div>
@@ -1195,7 +1196,7 @@
 
             const slackBtn = document.getElementById('slackBtn');
             slackBtn.disabled = true;
-            slackBtn.textContent = '🔍 Finding videos...';
+            slackBtn.textContent = '🔍 Finding videos & summarizing shorts...';
             hideAlert();
 
             try {
