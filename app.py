@@ -14,7 +14,11 @@ import traceback
 import requests as http_requests
 import atexit
 import json
-import re
+from short_summarizer import (
+    summarize_short_with_openai,
+    fallback_summary,
+    is_low_quality_transcript,
+)
 
 app = Flask(__name__)
 
@@ -73,41 +77,21 @@ def escape_slack_text(text):
             .replace('>', '&gt;'))
 
 
-def generate_short_summary(transcript: str, title: str = '', description: str = '', max_len: int = 140) -> str:
-    """Create a one-line summary of a short from its transcript."""
-    text = (transcript or '').strip()
-    if not text and description:
-        text = description.strip().split('\n')[0].strip()
-    if not text:
-        return title or 'Summary unavailable'
-
-    text = re.sub(r'\s+', ' ', text)
-    sentences = re.split(r'(?<=[.!?])\s+', text)
-    summary_parts = []
-    for sentence in sentences:
-        sentence = sentence.strip()
-        if len(sentence) < 20:
-            continue
-        summary_parts.append(sentence)
-        if len(' '.join(summary_parts)) >= 60 or len(summary_parts) >= 2:
-            break
-
-    summary = ' '.join(summary_parts) if summary_parts else text
-    if len(summary) > max_len:
-        summary = summary[:max_len].rsplit(' ', 1)[0].rstrip('.,!?') + '...'
-    return summary
-
-
 def enrich_short_video_data(exporter, video, video_data):
     """Add one-line 'about' summary from transcript for Slack shorts."""
     title = video.get('title', 'Untitled')
+    channel = video_data.get('channel', '')
     print(f"  📝 Summarizing short: {title[:60]}")
+
     transcript = exporter.get_transcript_text(video)
-    video_data['about'] = generate_short_summary(
-        transcript,
-        title=title,
-        description=video.get('description', '')
-    )
+    if is_low_quality_transcript(transcript, title):
+        transcript = ''
+
+    about = summarize_short_with_openai(transcript, title, channel)
+    if not about:
+        about = fallback_summary(transcript, title)
+
+    video_data['about'] = about
     return video_data
 
 

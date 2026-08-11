@@ -78,21 +78,40 @@ class CSDataExporter:
             return transcript_raw.strip()
         return str(transcript_raw).strip() if transcript_raw else ''
 
-    def get_transcript_text(self, video: dict, fetch_if_missing: bool = True) -> str:
-        """Get transcript text from video object, fetching from API if needed."""
-        existing = video.get('transcript_text', '')
-        if isinstance(existing, str) and len(existing.strip()) > 20:
-            return existing.strip()
+    def fetch_youtube_captions(self, youtube_video_id: str) -> str:
+        """Fetch spoken captions directly from YouTube as fallback."""
+        try:
+            from youtube_transcript_api import YouTubeTranscriptApi
+            entries = YouTubeTranscriptApi.get_transcript(
+                youtube_video_id,
+                languages=['en', 'hi', 'en-US', 'en-IN', 'en-GB']
+            )
+            return ' '.join(entry.get('text', '') for entry in entries).strip()
+        except Exception as e:
+            print(f"  ⚠️ YouTube captions unavailable for {youtube_video_id}: {e}")
+            return ''
 
-        raw = video.get('transcript', '')
-        if isinstance(raw, str) and len(raw.strip()) > 20:
-            video['transcript_text'] = raw.strip()
-            return raw.strip()
-        if isinstance(raw, list):
-            text = self._parse_transcript_payload({'transcript': raw})
-            if text:
-                video['transcript_text'] = text
-                return text
+    def get_transcript_text(self, video: dict, fetch_if_missing: bool = True) -> str:
+        """Get spoken transcript text, skipping polluted description/sponsor fields."""
+        from short_summarizer import clean_transcript, is_low_quality_transcript
+
+        title = video.get('title', '')
+        candidates = []
+
+        for key in ('transcript_text', 'transcript'):
+            raw = video.get(key, '')
+            if isinstance(raw, str) and raw.strip():
+                candidates.append(raw.strip())
+            elif isinstance(raw, list):
+                parsed = self._parse_transcript_payload({'transcript': raw})
+                if parsed:
+                    candidates.append(parsed)
+
+        for text in candidates:
+            cleaned = clean_transcript(text)
+            if cleaned and not is_low_quality_transcript(cleaned, title):
+                video['transcript_text'] = cleaned
+                return cleaned
 
         if not fetch_if_missing:
             return ''
@@ -101,15 +120,22 @@ class CSDataExporter:
         if not youtube_video_id:
             return ''
 
-        transcript_data = self.fetch_transcript(
-            youtube_video_id,
-            video.get('title', 'Unknown')
-        )
-        text = self._parse_transcript_payload(transcript_data)
-        if text:
-            video['transcript_text'] = text
+        # 1) Creator Studio transcript API
+        transcript_data = self.fetch_transcript(youtube_video_id, title or 'Unknown')
+        api_text = clean_transcript(self._parse_transcript_payload(transcript_data))
+        if api_text and not is_low_quality_transcript(api_text, title):
+            video['transcript_text'] = api_text
+            time.sleep(0.3)
+            return api_text
+
+        # 2) YouTube captions fallback
+        caption_text = clean_transcript(self.fetch_youtube_captions(youtube_video_id))
+        if caption_text and not is_low_quality_transcript(caption_text, title):
+            video['transcript_text'] = caption_text
+            return caption_text
+
         time.sleep(0.3)
-        return text
+        return api_text or caption_text or ''
     
     def fetch_videos(
         self,
