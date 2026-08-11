@@ -27,36 +27,42 @@ class CSDataExporter:
             "Content-Type": "application/json"
         }
     
-    def fetch_transcript(self, video_id: str, video_title: str = "") -> Optional[dict]:
-        """
-        Fetch transcript for a single video
-        
-        Args:
-            video_id: MongoDB video ID (not YouTube ID)
-            video_title: Video title for logging
-        
-        Returns:
-            Transcript data or None if not available
-        """
+    def _fetch_transcript_by_id(self, video_id: str, video_title: str = "") -> Optional[dict]:
+        """Fetch transcript from CS API for a specific video id."""
         try:
             response = requests.get(
                 f"{self.base_url}/videos/{video_id}/transcript",
-                headers=self.headers
+                headers=self.headers,
+                timeout=15
             )
-            
             if response.status_code == 200:
-                data = response.json()
-                return data
-            elif response.status_code == 404:
-                # Transcript not found or not ready
-                return None
-            else:
-                print(f"  ⚠️  Transcript API returned status {response.status_code} for: {video_title[:50]}")
-                return None
-                
-        except requests.exceptions.RequestException as e:
-            print(f"  ⚠️  Error fetching transcript: {e}")
+                return response.json()
+            if response.status_code != 404:
+                print(f"  ⚠️ Transcript API {response.status_code} for id={video_id[:20]}... title={video_title[:40]}")
             return None
+        except requests.exceptions.RequestException as e:
+            print(f"  ⚠️ Error fetching transcript for {video_id[:20]}...: {e}")
+            return None
+
+    def fetch_transcript(self, video_id: str, video_title: str = "") -> Optional[dict]:
+        """Fetch transcript for a single video id (backwards compatible)."""
+        return self._fetch_transcript_by_id(video_id, video_title)
+
+    def fetch_transcript_for_video(self, video: dict, video_title: str = "") -> Optional[dict]:
+        """Try MongoDB id first, then YouTube video_id for CS transcript API."""
+        ids_to_try = []
+        for key in ('id', 'video_id'):
+            val = video.get(key)
+            if val and str(val) not in ids_to_try:
+                ids_to_try.append(str(val))
+        for vid in ids_to_try:
+            data = self._fetch_transcript_by_id(vid, video_title)
+            if data:
+                text = self._parse_transcript_payload(data)
+                if text and len(text.strip()) > 20:
+                    print(f"  ✅ CS transcript found via id={vid[:24]}...")
+                    return data
+        return None
 
     def _parse_transcript_payload(self, transcript_data) -> str:
         """Parse transcript API response into plain text."""
@@ -80,13 +86,19 @@ class CSDataExporter:
 
     def fetch_youtube_captions(self, youtube_video_id: str) -> str:
         """Fetch spoken captions directly from YouTube as fallback."""
+        if not youtube_video_id:
+            return ''
         try:
             from youtube_transcript_api import YouTubeTranscriptApi
-            entries = YouTubeTranscriptApi.get_transcript(
+            api = YouTubeTranscriptApi()
+            fetched = api.fetch(
                 youtube_video_id,
-                languages=['en', 'hi', 'en-US', 'en-IN', 'en-GB']
+                languages=['en', 'hi', 'en-US', 'en-IN', 'en-GB', 'hi-IN']
             )
-            return ' '.join(entry.get('text', '') for entry in entries).strip()
+            text = ' '.join(snippet.text for snippet in fetched).strip()
+            if text:
+                print(f"  ✅ YouTube captions found for {youtube_video_id}")
+            return text
         except Exception as e:
             print(f"  ⚠️ YouTube captions unavailable for {youtube_video_id}: {e}")
             return ''
@@ -117,11 +129,11 @@ class CSDataExporter:
             return ''
 
         youtube_video_id = video.get('video_id', '')
-        if not youtube_video_id:
+        if not youtube_video_id and not video.get('id'):
             return ''
 
-        # 1) Creator Studio transcript API
-        transcript_data = self.fetch_transcript(youtube_video_id, title or 'Unknown')
+        # 1) Creator Studio transcript API (try MongoDB id + YouTube id)
+        transcript_data = self.fetch_transcript_for_video(video, title or 'Unknown')
         api_text = clean_transcript(self._parse_transcript_payload(transcript_data))
         if api_text and not is_low_quality_transcript(api_text, title):
             video['transcript_text'] = api_text
@@ -129,13 +141,16 @@ class CSDataExporter:
             return api_text
 
         # 2) YouTube captions fallback
-        caption_text = clean_transcript(self.fetch_youtube_captions(youtube_video_id))
-        if caption_text and not is_low_quality_transcript(caption_text, title):
-            video['transcript_text'] = caption_text
-            return caption_text
+        if youtube_video_id:
+            caption_text = clean_transcript(self.fetch_youtube_captions(youtube_video_id))
+            if caption_text and not is_low_quality_transcript(caption_text, title):
+                video['transcript_text'] = caption_text
+                time.sleep(0.3)
+                return caption_text
 
         time.sleep(0.3)
-        return api_text or caption_text or ''
+        print(f"  ⚠️ No usable transcript for: {(title or 'Unknown')[:50]}")
+        return ''
     
     def fetch_videos(
         self,
@@ -254,7 +269,7 @@ class CSDataExporter:
                 else:
                     # Fetch transcript from API using YouTube video ID
                     try:
-                        transcript_data = self.fetch_transcript(youtube_video_id, video_title)
+                        transcript_data = self.fetch_transcript_for_video(video, video_title)
                         
                         if transcript_data:
                             # Extract transcript from API response

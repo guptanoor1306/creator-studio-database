@@ -49,14 +49,25 @@ def is_low_quality_transcript(text: str, title: str = '') -> bool:
     return False
 
 
-def summarize_short_with_openai(transcript: str, title: str, channel: str = '') -> str:
+def summarize_short_with_openai(
+    transcript: str,
+    title: str,
+    channel: str = '',
+    thumbnail_text: str = '',
+) -> str:
     """Use OpenAI to produce a factual one-line summary from spoken transcript."""
     api_key = os.environ.get('OPENAI_API_KEY', '').strip()
     if not api_key:
+        print("  ⚠️ OPENAI_API_KEY not set")
         return ''
 
     cleaned = clean_transcript(transcript)
+    thumb = clean_transcript(thumbnail_text)
+    if len(cleaned) < 40 and len(thumb) >= 20:
+        cleaned = thumb
+
     if len(cleaned) < 40:
+        print(f"  ⚠️ Transcript too short ({len(cleaned)} chars) for OpenAI: {title[:40]}")
         return ''
 
     model = os.environ.get('OPENAI_MODEL', 'gpt-4o-mini')
@@ -65,9 +76,12 @@ def summarize_short_with_openai(transcript: str, title: str, channel: str = '') 
         "Write exactly ONE sentence, maximum 120 characters, describing the main topic or story "
         "based on the SPOKEN transcript. Ignore sponsor mentions, ads, promotional links, CTAs, "
         "intro music, and channel boilerplate. Be specific and factual about the content. "
-        "Do not start with 'This video' or 'In this short'. Do not include URLs or hashtags."
+        "Do not start with 'This video' or 'In this short'. Do not include URLs or hashtags. "
+        "Never repeat or lightly rephrase the title — explain what happens in the video."
     )
     user_prompt = f"Channel: {channel or 'Unknown'}\nTitle: {title}\n\nTranscript:\n{cleaned[:6000]}"
+    if thumb and thumb not in cleaned:
+        user_prompt += f"\n\nOn-screen/thumbnail text (supplementary):\n{thumb[:500]}"
 
     try:
         response = http_requests.post(
@@ -96,6 +110,9 @@ def summarize_short_with_openai(transcript: str, title: str, channel: str = '') 
         summary = URL_PATTERN.sub('', summary).strip()
         if len(summary) > 140:
             summary = summary[:140].rsplit(' ', 1)[0].rstrip('.,!?') + '...'
+        if title and summary.lower().strip(' .') == title.lower().strip(' .'):
+            print(f"  ⚠️ OpenAI echoed title for: {title[:40]}")
+            return ''
         return summary
     except Exception as e:
         print(f"  ⚠️ OpenAI summarization failed: {e}")
@@ -106,12 +123,14 @@ def fallback_summary(transcript: str, title: str) -> str:
     """Simple fallback when OpenAI is unavailable."""
     cleaned = clean_transcript(transcript)
     if not cleaned:
-        return title or 'Summary unavailable'
+        return 'Summary unavailable'
     sentences = re.split(r'(?<=[.!?])\s+', cleaned)
     for sentence in sentences:
         sentence = sentence.strip()
         if len(sentence) >= 30 and not is_low_quality_transcript(sentence, title):
+            if title and sentence.lower().strip(' .') == title.lower().strip(' .'):
+                continue
             if len(sentence) > 140:
                 sentence = sentence[:140].rsplit(' ', 1)[0].rstrip('.,!?') + '...'
             return sentence
-    return title or 'Summary unavailable'
+    return 'Summary unavailable'

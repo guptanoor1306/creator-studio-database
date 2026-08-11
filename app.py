@@ -81,13 +81,14 @@ def enrich_short_video_data(exporter, video, video_data):
     """Add one-line 'about' summary from transcript for Slack shorts."""
     title = video.get('title', 'Untitled')
     channel = video_data.get('channel', '')
+    thumbnail_text = video.get('thumbnail_text', '') or ''
     print(f"  📝 Summarizing short: {title[:60]}")
 
     transcript = exporter.get_transcript_text(video)
     if is_low_quality_transcript(transcript, title):
         transcript = ''
 
-    about = summarize_short_with_openai(transcript, title, channel)
+    about = summarize_short_with_openai(transcript, title, channel, thumbnail_text)
     if not about:
         about = fallback_summary(transcript, title)
 
